@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <!--
+    ENVIRONMENT SAFESTRAP: During local development runs, if local bundler tools (such as Vite/Webpack) require inline script evaluation or websocket connections for Hot Module Replacement (HMR), developers must conditionally swap or supplement this meta-tag string via the build engine configuration, ensuring that the strict 'script-src 'self';' and 'connect-src' perimeters are enforced natively during the production optimization build step.
+  -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; connect-src 'self' http://localhost:3001 http://localhost:3000 http://192.168.29.42:3001 https://api.brone.network; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none';">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brone Network</title>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/index.tsx"></script>
+</body>
+
+</html>

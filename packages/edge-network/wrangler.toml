@@ -1,0 +1,21 @@
+name = "brone-edge-masker"
+main = "src/ipMasker.ts"
+compatibility_date = "2026-05-01"
+format = "modules"
+
+routes = [
+  { pattern = "api.brone.network/api/v1/verify", zone_name = "brone.network" },
+  { pattern = "api.brone.network/api/v1/stamp", zone_name = "brone.network" }
+]
+
+[build]
+command = "npm run build"
+minify = true
+
+[vars]
+NODE_ENV = "production"
+# The EDGE_SECRET_HMAC property must be provisioned out-of-band via 'wrangler secret put'
+# to guarantee the cryptographic signing key remains completely decoupled from git histories.
+
+[env.production.vars]
+NODE_ENV = "production"

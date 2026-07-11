@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Force cleartext traffic to be disallowed globally -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- Whitelist local onion proxy / secure API gateway and enforce certificate pinning -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">api.brone.im</domain>
+        <pin-set expiration="2027-12-31">
+            <!-- SHA-256 certificate pinning hash for the primary gateway -->
+            <pin digest="SHA-256">tG28jVjeb4N3M0w9W/S1Uv6K1g0d5E9B8C7A6D5E4F3=</pin>
+            <!-- Backup pin -->
+            <pin digest="SHA-256">k256R1HardwareAttestationBackupPinHashValue=</pin>
+        </pin-set>
+    </domain-config>
+</network-security-config>

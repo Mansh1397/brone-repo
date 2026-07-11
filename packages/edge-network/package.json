@@ -1,0 +1,14 @@
+{
+  "name": "@brone/edge-network",
+  "version": "1.0.0",
+  "main": "src/ipMasker.ts",
+  "types": "src/ipMasker.ts",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240222.0",
+    "miniflare": "^3.20231024.0",
+    "typescript": "^5.3.3"
+  }
+}

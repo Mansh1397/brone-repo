@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  api-gateway:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      # - DATABASE_URL=postgresql://brone_admin:fortress_vault_secure_pass@postgres-db:5432/brone_prod
+      - DATABASE_URL=postgresql://postgres:7gu69WV1F1ZjDs2Y@db.dmzasxlujforjnyufgrf.supabase.co:5432/postgres
+      - REDIS_URL=redis://redis-cache:6379
+      - SERVER_PEPPER=BRONE_CORE_SECURE_PEPPER_STRING_MUST_BE_LONG_AND_RANDOM_IN_PROD
+      - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://192.168.29.42:5173
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+    networks:
+      - brone-secure-net
+
+  postgres-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=brone_admin
+      - POSTGRES_PASSWORD=fortress_vault_secure_pass
+      - POSTGRES_DB=brone_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brone_admin -d brone_prod"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - brone-secure-net
+
+  redis-cache:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - brone-secure-net
+
+networks:
+  brone-secure-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

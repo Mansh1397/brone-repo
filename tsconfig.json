@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": [
+      "ES2022"
+    ],
+    "allowJs": true,
+    "outDir": "./dist",
+    "rootDir": "./",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react",
+    "typeRoots": [
+      "./node_modules/@types",
+      "./apps/mobile/src/types"
+    ]
+  },
+  "include": [
+    "services/**/*",
+    "apps/**/*",
+    "packages/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "apps",
+    "**/__tests__/**/*", /* ⚡ SKIP ALL TEST BLOCKS */
+    "**/*.test.ts", /* ⚡ SKIP INDIVIDUAL TEST FILE EXECUTIONS */
+    "**/__mocks__/**/*" /* ⚡ SKIP TEST MOCK ARCHITECTURES */
+  ]
+}

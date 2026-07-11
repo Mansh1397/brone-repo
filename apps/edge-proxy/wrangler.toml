@@ -1,0 +1,10 @@
+name = "brone-edge-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+format = "modules"
+
+[vars]
+BACKEND_URL = "https://api.brone.network"
+# ORIGIN_SIGNATURE_SECRET is a sensitive credential and must be provisioned in production
+# via 'wrangler secret put' (or in wrangler.toml as a placeholder for local development/deployment environments).
+ORIGIN_SIGNATURE_SECRET = "placeholder_secret_key_change_me_in_prod"

@@ -1,0 +1,23 @@
+{
+  "rules": [
+    {
+      "name": "AuthEndpointRateLimit",
+      "action": "block",
+      "expression": "http.request.uri.path wildcard '/api/v1/auth/*' and ip.src.rate_limit_bucket(60) > 5",
+      "mitigation": "js_challenge"
+    },
+    {
+      "name": "VoucherExchangeRateLimit",
+      "action": "block",
+      "expression": "http.request.uri.path eq '/api/v1/voucher/exchange' and ip.src.rate_limit_bucket(60) > 30",
+      "burst_threshold": 10,
+      "mitigation": "turnstile_challenge"
+    },
+    {
+      "name": "BotScraperShield",
+      "action": "challenge",
+      "expression": "http.user_agent contains 'headless' or http.user_agent contains 'python-requests' or http.user_agent eq ''",
+      "mitigation": "turnstile_challenge"
+    }
+  ]
+}

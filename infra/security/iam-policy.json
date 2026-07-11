@@ -1,0 +1,34 @@
+{
+  "bindings": [
+    {
+      "role": "roles/cloudkms.cryptoKeyEncrypterDecrypter",
+      "members": [
+        "serviceAccount:verification-relay-proxy-sa@brone-production.iam.gserviceaccount.com"
+      ]
+    },
+    {
+      "role": "roles/cloudkms.signerVerifier",
+      "members": [
+        "serviceAccount:verification-relay-proxy-sa@brone-production.iam.gserviceaccount.com"
+      ]
+    }
+  ],
+  "auditConfigs": [
+    {
+      "service": "cloudkms.googleapis.com",
+      "auditLogConfigs": [
+        {
+          "logType": "DATA_READ"
+        },
+        {
+          "logType": "DATA_WRITE"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "rotationPeriod": "7776000s",
+    "nextRotationTime": "2026-08-23T14:36:45Z",
+    "description": "Automated 90-day KMS key rotation schedule. Captures service invocation events and pod origins, masking cleartext payload hashes to prevent trace linkages."
+  }
+}

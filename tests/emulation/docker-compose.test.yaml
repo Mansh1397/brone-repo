@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  proxy-region-asia:
+    build:
+      context: ../../
+      dockerfile: infra/docker/verification-proxy.Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - REGION=asia
+    networks:
+      - brone-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://localhost:3000/healthz', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  proxy-region-us:
+    build:
+      context: ../../
+      dockerfile: infra/docker/verification-proxy.Dockerfile
+    ports:
+      - "3002:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - REGION=us
+    networks:
+      - brone-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://localhost:3000/healthz', (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  consensus-broker:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - brone-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  test-actor-generator:
+    image: node:22-alpine
+    depends_on:
+      proxy-region-asia:
+        condition: service_healthy
+      proxy-region-us:
+        condition: service_healthy
+      consensus-broker:
+        condition: service_healthy
+    networks:
+      - brone-net
+    environment:
+      - ASIA_PROXY_URL=http://proxy-region-asia:3000
+      - US_PROXY_URL=http://proxy-region-us:3000
+    command: >
+      node -e "
+      const generate = async () => {
+        console.log('[ACTOR] Ignited. Starting load generation of 5000 transactions/min...');
+        let txCount = 0;
+        setInterval(async () => {
+          for (let i = 0; i < 83; i++) {
+            txCount++;
+            const payload = {
+              taskId: 'task-' + txCount,
+              zk_proof: { public_inputs: ['input'], proof_signature: 'valid-signature-' + txCount },
+              decision: 'approve'
+            };
+            const url = Math.random() < 0.5 ? process.env.ASIA_PROXY_URL : process.env.US_PROXY_URL;
+            fetch(url + '/tasks/' + payload.taskId + '/acquire-lease', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            }).catch(() => {});
+          }
+        }, 1000);
+      };
+      generate();
+      "
+
+networks:
+  brone-net:
+    driver: bridge
