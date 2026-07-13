@@ -98,7 +98,7 @@ describe("Hardened Linkable Ring Verification Gateway Hook Router Tests", () => 
       publicKeysRing: ring,
       signature: {
         c1: sig.c1.toString(),
-        s: sig.s.map(val => val.toString()),
+        s: sig.s.map((val: any) => val.toString()),
         keyImage: {
           x: sig.keyImage.x.toString(),
           y: sig.keyImage.y.toString()
@@ -144,7 +144,7 @@ describe("Hardened Linkable Ring Verification Gateway Hook Router Tests", () => 
       publicKeysRing: unauthorizedRing,
       signature: {
         c1: sig.c1.toString(),
-        s: sig.s.map(val => val.toString()),
+        s: sig.s.map((val: any) => val.toString()),
         keyImage: {
           x: sig.keyImage.x.toString(),
           y: sig.keyImage.y.toString()
@@ -178,7 +178,7 @@ describe("Hardened Linkable Ring Verification Gateway Hook Router Tests", () => 
       publicKeysRing: ring,
       signature: {
         c1: sig.c1.toString(),
-        s: sig.s.map(val => val.toString()),
+        s: sig.s.map((val: any) => val.toString()),
         keyImage: {
           x: sig.keyImage.x.toString(),
           y: sig.keyImage.y.toString()

@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "test": "npx jest packages/crypto-core",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace=@brone/types && npm run build --workspace=@brone/crypto-core && npm run build --workspace=@brone/backend",
     "frontend:dev": "npm run dev --workspace=apps/frontend",
     "frontend:build": "npm run build --workspace=apps/frontend"
   },
