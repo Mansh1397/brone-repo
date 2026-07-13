@@ -179,7 +179,7 @@ export default function AdminDashboard() {
           <div style={styles.registryTableContainer}>
             <span style={styles.label}>Registered Devices & Pre-Keys</span>
             <div style={styles.table}>
-              {preKeys.map((item) => (
+              {preKeys.map((item: any) => (
                 <div key={item.deviceId} style={styles.tableRow}>
                   <span style={styles.tableCellId}>{item.deviceId}</span>
                   <span style={styles.tableCellKey}>{item.identityKey}</span>
@@ -214,7 +214,7 @@ export default function AdminDashboard() {
               {verificationLog.length === 0 ? (
                 <span style={styles.logEmpty}>No verification runs executed in this session.</span>
               ) : (
-                verificationLog.map((log, index) => (
+                verificationLog.map((log: any, index: number) => (
                   <div key={index} style={styles.logLine}>
                     {log}
                   </div>
