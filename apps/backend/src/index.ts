@@ -309,9 +309,14 @@ app.post("/api/v1/reputation/increment", handleMetricIncrement);
 app.post("/api/v1/reporting/reputation/increment", handleMetricIncrement);
 app.post("/api/v1/reporting/increment", handleMetricIncrement);
 
+const getAuthServiceUrl = () => {
+  const url = process.env.AUTH_SERVICE_URL || "http://127.0.0.1:3000";
+  return url.endsWith("/") ? url.slice(0, -1) : url;
+};
+
 const handleRequestOtp = async (req: any, res: any) => {
   try {
-    const response = await fetch("http://127.0.0.1:3000/api/auth/request-otp", {
+    const response = await fetch(`${getAuthServiceUrl()}/api/auth/request-otp`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body)
@@ -325,14 +330,14 @@ const handleRequestOtp = async (req: any, res: any) => {
     const data = await response.json();
     return res.status(response.status).json(data);
   } catch (error: any) {
-    console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool.");
+    console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Error:", error.message || error);
     return res.status(500).json({ error: "Gateway authentication proxy failure." });
   }
 };
 
 const handleVerifyOtp = async (req: any, res: any) => {
   try {
-    const response = await fetch("http://127.0.0.1:3000/api/auth/verify-otp", {
+    const response = await fetch(`${getAuthServiceUrl()}/api/auth/verify-otp`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body)
@@ -346,7 +351,7 @@ const handleVerifyOtp = async (req: any, res: any) => {
     const data = await response.json();
     return res.status(response.status).json(data);
   } catch (error: any) {
-    console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool.");
+    console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Error:", error.message || error);
     return res.status(500).json({ error: "Gateway authentication proxy failure." });
   }
 };

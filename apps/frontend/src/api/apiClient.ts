@@ -95,27 +95,26 @@ function extractServerTime(headers: any): number | null {
 }
 
 // 1. BASELINE CONTEXT CONFIGURATION
-// 1. Safe detection for browser vs Node environments
-const getBaseURL = () => {
-  // Fallback signature for Node/Jest/Vite environments
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env.VITE_API_URL || process.env.VITE_API_BASE_URL || '/api/v1';
+const getCleanBaseURL = () => {
+  let url = '';
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
+    url = import.meta.env.VITE_API_URL;
+  } else if (typeof process !== 'undefined' && process.env && process.env.VITE_API_URL) {
+    url = process.env.VITE_API_URL;
+  } else {
+    url = 'http://localhost:3001';
   }
-
-  try {
-    const metaEnv = new Function('return import.meta.env')();
-    return (metaEnv && (metaEnv.VITE_API_URL || metaEnv.VITE_API_BASE_URL)) || '/api/v1';
-  } catch (e) {
-    return '/api/v1';
-  }
+  const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url;
+  return `${cleanUrl}/api/v1`;
 };
 
 export const apiClient = axios.create({
-  baseURL: getBaseURL(),
+  baseURL: getCleanBaseURL(),
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
 // No-op interceptors removed for cleaner logging in console
 
 // 2. DESTRUCTIVE HEADER SCRUBBING & 4. CORS PREFLIGHT HEADER SHIELDING

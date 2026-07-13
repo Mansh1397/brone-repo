@@ -102,8 +102,14 @@ export class MetricSyncEngine {
     const edgeToken = await computeEdgeToken(timestamp);
 
     // 5. Send out-of-band request immediately via fetch + keepalive
-    // ✅ Check production status before falling back to the external domain:
-    const baseUrl = import.meta.env.PROD ? "https://api.brone.network" : "/api/proxy-edge";
+    const getBaseUrl = () => {
+      if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
+        const u = import.meta.env.VITE_API_URL;
+        return u.endsWith('/') ? u.slice(0, -1) : u;
+      }
+      return import.meta.env.PROD ? "https://api.brone.network" : "/api/proxy-edge";
+    };
+    const baseUrl = getBaseUrl();
     const url = `${baseUrl}/api/v1/reporting/reputation/increment`;
 
     const response = await fetch(url, {
