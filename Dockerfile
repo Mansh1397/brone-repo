@@ -1,43 +1,34 @@
-# FROM node:18-alpine
-
-# WORKDIR /usr/src/app
-
-# COPY package*.json ./
-# RUN npm install && npm install -g typescript @types/node
-
-# COPY . .
-
-# RUN tsc
-
-# EXPOSE 3000
-
-# CMD [ "node", "dist/services/server.js" ]
-
+# --- Stage 1: Build & Prune ---
 FROM node:18-alpine AS base
 WORKDIR /app
 
-# 1. Copy everything necessary for workspace resolution
+# Copy all configuration files and full project source
 COPY package.json package-lock.json ./
 COPY apps/ ./apps/
 COPY packages/ ./packages/
 
-# 2. Install all dependencies (npm will link @brone/types and @brone/crypto-core automatically)
+# Install ALL dependencies (including devDependencies needed for compilation)
 RUN npm install
 
-# 3. Build the backend workspace specifically
+# Compile the backend and packages
 RUN npm run build --workspace=@brone/backend
 
-# 4. Final production stage
-FROM node:18-alpine
+# Remove development dependencies to keep production image light
+RUN npm prune --omit=dev
+
+# --- Stage 2: Clean Production Runner ---
+FROM node:18-alpine AS runner
 WORKDIR /app
+ENV NODE_ENV=production
 
-# Copy the built backend
-COPY --from=base /app/apps/backend/dist ./dist
-# Copy the backend package.json for production dependencies
-COPY --from=base /app/apps/backend/package.json ./package.json
+# Copy root configs
+COPY package.json package-lock.json ./
 
-# Install ONLY production deps (npm will link local workspaces again)
-RUN npm install --omit=dev
+# Copy the pre-installed, pruned production node_modules from base stage
+COPY --from=base /app/node_modules ./node_modules
+COPY --from=base /app/packages ./packages
+COPY --from=base /app/apps/backend/package.json ./apps/backend/package.json
+COPY --from=base /app/apps/backend/dist ./apps/backend/dist
 
 EXPOSE 3000
-CMD [ "node", "dist/index.js" ]
+CMD [ "node", "apps/backend/dist/index.js" ]

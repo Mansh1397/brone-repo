@@ -4,7 +4,8 @@
   "main": "src/index.ts",
   "scripts": {
     "test": "node --expose-gc ../../node_modules/jest/bin/jest.js -c ../../jest.config.js",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts"
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc"
   },
   "dependencies": {
     "@brone/types": "*",
