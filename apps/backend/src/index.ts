@@ -310,7 +310,7 @@ app.post("/api/v1/reporting/reputation/increment", handleMetricIncrement);
 app.post("/api/v1/reporting/increment", handleMetricIncrement);
 
 const getAuthServiceUrl = () => {
-  const url = process.env.AUTH_SERVICE_URL || "http://127.0.0.1:3000";
+  const url = process.env.VITE_API_URL || "http://127.0.0.1:3000";
   return url.endsWith("/") ? url.slice(0, -1) : url;
 };
 
