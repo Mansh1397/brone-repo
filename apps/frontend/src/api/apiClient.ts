@@ -44,7 +44,7 @@ export function isWhitelistedUrl(url?: string): boolean {
       }
 
       // 3. Allow production API domain
-      return hostname === 'api.brone.network';
+      return hostname === 'api.brone.network' || hostname === 'brone-backend.onrender.com';
     } catch (e) {
       return false;
     }
@@ -104,7 +104,7 @@ const getBaseURL = () => {
 
   try {
     const metaEnv = new Function('return import.meta.env')();
-    return (metaEnv && metaEnv.VITE_API_BASE_URL) || '/api/v1';
+    return (metaEnv && (metaEnv.VITE_API_URL || metaEnv.VITE_API_BASE_URL)) || '/api/v1';
   } catch (e) {
     return '/api/v1';
   }

@@ -47,7 +47,9 @@ app.use((req: any, res: any, next: any) => {
       origin.includes("192.168.") ||
       origin.includes("10.") ||
       origin.includes("localhost") ||
-      origin.includes("127.0.0.1");
+      origin.includes("127.0.0.1") ||
+      origin.startsWith("capacitor://") ||
+      origin.startsWith("ionic://");
     if (!isAllowed) {
       res.setHeader("Connection", "close");
       return res.status(403).json({ error: "Forbidden: Unauthorized Origin" });
