@@ -10,7 +10,7 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc -b"
   },
   "devDependencies": {
     "typescript": "^5.3.3"
