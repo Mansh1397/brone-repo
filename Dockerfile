@@ -11,7 +11,7 @@ COPY packages/ ./packages/
 RUN npm install
 
 # Compile the backend and packages
-RUN npm run build --workspace=@brone/backend
+RUN npm run build --workspaces --if-present
 
 # Remove development dependencies to keep production image light
 RUN npm prune --omit=dev

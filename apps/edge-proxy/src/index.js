@@ -89,8 +89,8 @@ exports.default = {
                 status: 204,
                 headers: {
                     'Access-Control-Allow-Origin': origin || '',
-                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type, X-Brone-Edge-Token',
+                    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS', // Added extra REST methods
+                    'Access-Control-Allow-Headers': 'Content-Type, X-Brone-Edge-Token, Authorization, X-Requested-With', // Added standard fallbacks
                     'Access-Control-Max-Age': '86400',
                 },
             });
