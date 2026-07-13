@@ -66,7 +66,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
       addLog(`[PoW] Challenge solved successfully. Nonce: ${nonce} (Time: ${duration}ms)`);
 
       addLog("[API] Dispatching authentication dispatch payload to /api/v1/auth/request-otp...");
-      const response = await apiClient.post("/auth/request-otp", {
+      const response = await apiClient.post("auth/request-otp", {
         phoneNumber,
         powNonce: nonce,
       });
@@ -116,7 +116,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
       addLog(`[Crypto] Generated Client Public Key Fingerprint: ${publicKeyHex.substring(0, 16)}...`);
       addLog("[API] Submitting identity verification payload to /api/v1/auth/verify-otp...");
 
-      const response = await apiClient.post("/auth/verify-otp", {
+      const response = await apiClient.post("auth/verify-otp", {
         phoneNumber,
         otpCode,
         clientPublicKey: publicKeyHex,

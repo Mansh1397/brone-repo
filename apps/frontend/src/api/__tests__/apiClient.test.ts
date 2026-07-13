@@ -55,7 +55,7 @@ describe('Hardened API Network Client Integration Tests', () => {
 
   // Test 1: Whitelist Enforcement and Token Injection
   it('should strip non-whitelisted headers and inject X-Brone-Edge-Token', async () => {
-    await apiClient.post('/verify', { foo: 'bar' }, {
+    await apiClient.post('verify', { foo: 'bar' }, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0)',
         'X-Fingerprint-Id': '1234567890',
@@ -81,7 +81,7 @@ describe('Hardened API Network Client Integration Tests', () => {
   it('should completely suppress X-Brone-Edge-Token header on OPTIONS preflight requests', async () => {
     await apiClient.request({
       method: 'OPTIONS',
-      url: '/verify',
+      url: 'verify',
     });
 
     expect(requestLog.length).toBe(1);
@@ -120,7 +120,7 @@ describe('Hardened API Network Client Integration Tests', () => {
     };
 
     // First request initiates variance measurement and caches clockOffsetMs
-    await apiClient.post('/stamp');
+    await apiClient.post('stamp');
 
     // Variance: serverTime - localTime = 60000
     expect(clockOffsetMs).toBe(60000);
@@ -129,7 +129,7 @@ describe('Hardened API Network Client Integration Tests', () => {
     requestLog = [];
 
     // Second request should mathematically compensate the skew
-    await apiClient.post('/stamp');
+    await apiClient.post('stamp');
 
     expect(requestLog.length).toBe(1);
     const secondRequestHeaders = requestLog[0].headers;
@@ -152,7 +152,7 @@ describe('Hardened API Network Client Integration Tests', () => {
     jest.useFakeTimers();
     responseDelay = 11000; // Hang for 11 seconds
 
-    const requestPromise = apiClient.post('/verify');
+    const requestPromise = apiClient.post('verify');
 
     // Flush the JS microtask queue to allow request interceptor to run and adapter to register its setTimeout
     for (let i = 0; i < 10; i++) {

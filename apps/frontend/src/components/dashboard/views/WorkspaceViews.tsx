@@ -101,7 +101,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string }> = (
     let active = true;
     const fetchAndDecrypt = async () => {
       try {
-        const response = await apiClient.get(`/posts/extract?ipfs_hash=${ipfsHash}`);
+        const response = await apiClient.get(`posts/extract?ipfs_hash=${ipfsHash}`);
         const payload = response.data.encrypted_payload;
         if (payload && payload.startsWith("ENC_GCM:")) {
           const decrypted = await decryptPayload(payload);
@@ -174,7 +174,7 @@ const getServerPublicKey = async (): Promise<RSAPublicKey> => {
 
   cachedServerKeyPromise = (async () => {
     try {
-      const response = await apiClient.get("/keys");
+      const response = await apiClient.get("keys");
       const eStr = response.data.e;
       const nStr = response.data.n;
       if (!eStr || !nStr) {
@@ -296,7 +296,7 @@ export const HomeFeed: React.FC = () => {
         // Add a log right before your fetch to verify the token actually exists on your phone
         console.log("Current Auth Token:", localStorage.getItem('accessToken'));
 
-        const response = await apiClient.get("/feed", {
+        const response = await apiClient.get("feed", {
           signal: abortController.signal,
           headers: {
             "Cache-Control": "no-store, no-cache, must-revalidate",
@@ -592,7 +592,7 @@ export const ReportingHub: React.FC = () => {
       const blinded = blindMessage(messageHash, r, liveServerKey);
 
       // 4. Send blinded transaction to the Edge / Backend stamp API
-      const stampResponse = await apiClient.post("/stamp", {
+      const stampResponse = await apiClient.post("stamp", {
         blindedTransaction: blinded.toString(),
       });
 
@@ -632,7 +632,7 @@ export const ReportingHub: React.FC = () => {
 
       const encryptedPayload = await encryptPayload(reportText);
 
-      await apiClient.post("/arbitration", {
+      await apiClient.post("arbitration", {
         reputation_key: publicKeyHex,
         content: contentCID,
         blindedTransaction: blinded.toString(),
@@ -738,7 +738,7 @@ export const JuryDuties: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await apiClient.get("/arbitration", {
+        const response = await apiClient.get("arbitration", {
           signal: abortController.signal,
           cache: "no-store",
           headers: {
@@ -808,7 +808,7 @@ export const JuryDuties: React.FC = () => {
         .join("");
 
       // 3. Dispatch vote POST
-      await apiClient.post("/arbitration/vote", {
+      await apiClient.post("arbitration/vote", {
         reputation_key: publicKeyHex,
         ipfs_hash,
         blind_ballot_token,
@@ -984,7 +984,7 @@ export const CapitalLedger: React.FC = () => {
     const fetchStats = async () => {
       setIsLoading(true);
       try {
-        const response = await apiClient.get(`/reputation/${publicKeyHex}`, {
+        const response = await apiClient.get(`reputation/${publicKeyHex}`, {
           signal: abortController.signal,
           cache: "no-store",
           headers: {

@@ -22,7 +22,7 @@ describe('MSW Handler Integration Tests with apiClient', () => {
   });
 
   it('should intercept stamp requests and return mock signature payload and headers', async () => {
-    const response = await apiClient.post('/api/v1/stamp', {
+    const response = await apiClient.post('api/v1/stamp', {
       blindedPayload: 'mock-blinded-data',
     });
 
@@ -34,7 +34,7 @@ describe('MSW Handler Integration Tests with apiClient', () => {
   });
 
   it('should intercept verify requests and return verified status', async () => {
-    const response = await apiClient.post('/api/v1/verify', {
+    const response = await apiClient.post('api/v1/verify', {
       signature: 'mocked-signature',
     });
 
@@ -45,19 +45,19 @@ describe('MSW Handler Integration Tests with apiClient', () => {
   it('should support error simulations on stamp endpoint', async () => {
     // Simulate expired token (403)
     await expect(
-      apiClient.post('/api/v1/stamp?error=expired', { data: 'test' })
+      apiClient.post('api/v1/stamp?error=expired', { data: 'test' })
     ).rejects.toThrow(/status code 403/i);
 
     // Simulate double spend (409)
     await expect(
-      apiClient.post('/api/v1/stamp?error=double-spend', { data: 'test' })
+      apiClient.post('api/v1/stamp?error=double-spend', { data: 'test' })
     ).rejects.toThrow(/status code 409/i);
   });
 
   it('should support error simulations on verify endpoint', async () => {
     // Simulate expired token (403)
     await expect(
-      apiClient.post('/api/v1/verify?error=expired', { data: 'test' })
+      apiClient.post('api/v1/verify?error=expired', { data: 'test' })
     ).rejects.toThrow(/status code 403/i);
   });
 
@@ -69,7 +69,7 @@ describe('MSW Handler Integration Tests with apiClient', () => {
 
     // Request the stall endpoint with a 300ms delay and pass the abort signal
     await expect(
-      apiClient.get('/api/v1/stall?delay=300', { signal: controller.signal })
+      apiClient.get('api/v1/stall?delay=300', { signal: controller.signal })
     ).rejects.toThrow(/canceled|aborted/i);
 
     clearTimeout(timer);

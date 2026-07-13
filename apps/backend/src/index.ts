@@ -297,17 +297,15 @@ const handleGetFeed = async (req: any, res: any) => {
   }
 };
 
-app.get("/feed", requireAuth, handleGetFeed);
-app.get("/api/v1/feed", requireAuth, handleGetFeed);
+const v1Router = express.Router();
 
-app.post("/api/v1/verify", guardAgainstDoubleSpend, verifyRingHandler);
-app.get("/api/v1/keys", requireAuth, getPublicKeyConfig);
-app.get("/keys", requireAuth, getPublicKeyConfig);
-app.post("/api/v1/stamp", requireAuth, handleBlindStamp);
-app.post("/stamp", requireAuth, handleBlindStamp);
-app.post("/api/v1/reputation/increment", handleMetricIncrement);
-app.post("/api/v1/reporting/reputation/increment", handleMetricIncrement);
-app.post("/api/v1/reporting/increment", handleMetricIncrement);
+v1Router.get("/feed", requireAuth, handleGetFeed);
+v1Router.post("/verify", guardAgainstDoubleSpend, verifyRingHandler);
+v1Router.get("/keys", requireAuth, getPublicKeyConfig);
+v1Router.post("/stamp", requireAuth, handleBlindStamp);
+v1Router.post("/reputation/increment", handleMetricIncrement);
+v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
+v1Router.post("/reporting/increment", handleMetricIncrement);
 
 const getAuthServiceUrl = () => {
   const url = process.env.VITE_API_URL || "http://127.0.0.1:3000";
@@ -356,10 +354,8 @@ const handleVerifyOtp = async (req: any, res: any) => {
   }
 };
 
-app.post("/auth/request-otp", handleRequestOtp);
-app.post("/api/v1/auth/request-otp", handleRequestOtp);
-app.post("/auth/verify-otp", handleVerifyOtp);
-app.post("/api/v1/auth/verify-otp", handleVerifyOtp);
+v1Router.post("/auth/request-otp", handleRequestOtp);
+v1Router.post("/auth/verify-otp", handleVerifyOtp);
 
 const mockEncryptedData: Record<string, string> = {
   "QmPotholeReported": "ENC_GCM:c3BsaXRfYnl0ZXNfZGF0YQ==",
@@ -628,24 +624,18 @@ const handleIPFSExtraction = async (req: any, res: any) => {
   }
 };
 
-app.get("/api/v1/arbitration", requireAuth, handleGetArbitration);
-app.post("/api/v1/arbitration", requireAuth, handlePostArbitration);
-app.post("/api/v1/arbitration/vote", requireAuth, handleVoteArbitration);
+v1Router.get("/arbitration", requireAuth, handleGetArbitration);
+v1Router.post("/arbitration", requireAuth, handlePostArbitration);
+v1Router.post("/arbitration/vote", requireAuth, handleVoteArbitration);
 
-app.get("/arbitration", requireAuth, handleGetArbitration);
-app.post("/arbitration", requireAuth, handlePostArbitration);
-app.post("/arbitration/vote", requireAuth, handleVoteArbitration);
+v1Router.get("/jury/arbitration", requireAuth, handleGetArbitration);
+v1Router.post("/jury/arbitration", requireAuth, handlePostArbitration);
+v1Router.post("/jury/arbitration/vote", requireAuth, handleVoteArbitration);
 
-app.get("/api/v1/jury/arbitration", requireAuth, handleGetArbitration);
-app.post("/api/v1/jury/arbitration", requireAuth, handlePostArbitration);
-app.post("/api/v1/jury/arbitration/vote", requireAuth, handleVoteArbitration);
+v1Router.get("/posts/extract", requireAuth, handleIPFSExtraction);
+v1Router.post("/posts/extract", requireAuth, handleIPFSExtraction);
 
-app.get("/api/v1/posts/extract", requireAuth, handleIPFSExtraction);
-app.post("/api/v1/posts/extract", requireAuth, handleIPFSExtraction);
-app.get("/posts/extract", requireAuth, handleIPFSExtraction);
-app.post("/posts/extract", requireAuth, handleIPFSExtraction);
-
-app.get("/api/v1/reputation/:key", requireAuth, (req: any, res: any) => {
+v1Router.get("/reputation/:key", requireAuth, (req: any, res: any) => {
   res.status(200).json({
     reputation_key: req.params.key,
     total_posts: 45,
@@ -654,15 +644,9 @@ app.get("/api/v1/reputation/:key", requireAuth, (req: any, res: any) => {
     verification_accuracy_rate: "92%"
   });
 });
-app.get("/reputation/:key", requireAuth, (req: any, res: any) => {
-  res.status(200).json({
-    reputation_key: req.params.key,
-    total_posts: 45,
-    total_verifications: 18,
-    rewards_balance: 1250,
-    verification_accuracy_rate: "92%"
-  });
-});
+
+app.use("/api/v1", v1Router);
+app.use("/", v1Router);
 
 // 5. ROUTE DISCOVERY TIMING IMMUNIZATION
 app.all("*", (req: any, res: any) => {
