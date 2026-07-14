@@ -100,7 +100,7 @@ describe("Identity Onboarding, Stateless Express OTP, and Hardware Session Persi
       expect(statusMock).toHaveBeenCalledWith(200);
       expect(jsonMock).toHaveBeenCalledWith({
         success: true,
-        message: "Verification token dispatched."
+        message: "OTP generated successfully (Check Render Logs!)"
       });
     });
 

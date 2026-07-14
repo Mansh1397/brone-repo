@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import argon2 from 'argon2';
 import crypto from 'crypto';
 import { Client } from 'pg';
@@ -27,12 +27,49 @@ function verifyProofOfWork(nonce: string, phone: string): boolean {
     return hash.startsWith('0000');
 }
 
+// 🛡️ PoW validation middleware with diagnostic wrapping and development bypass
+export const powValidator = (req: Request, res: Response, next: NextFunction) => {
+    try {
+        if (process.env.NODE_ENV === "development" || process.env.BYPASS_POW === "true") {
+            console.log("[BETA MODE]: Bypassing Proof of Work nonce verification.");
+            return next();
+        }
+
+        const { phoneNumber, powNonce } = req.body;
+        
+        try {
+            if (!verifyProofOfWork(powNonce, phoneNumber)) {
+                res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+                return;
+            }
+        } catch (error: any) {
+            console.error("[PoW MIDDLEWARE EXCEPTION]:", error.message || error);
+            res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+            return;
+        }
+
+        next();
+    } catch (error: any) {
+        console.error("[PoW MIDDLEWARE EXCEPTION]:", error.message || error);
+        res.status(500).json({ error: error.message || 'Systemic routing anomaly.' });
+    }
+};
+
 export const requestOtp = async (req: Request, res: Response): Promise<void> => {
     let { phoneNumber, powNonce } = req.body;
     try {
-        if (!verifyProofOfWork(powNonce, phoneNumber)) {
-            res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-            return;
+        const shouldBypass = process.env.NODE_ENV === "development" || process.env.BYPASS_POW === "true";
+        if (!shouldBypass) {
+            try {
+                if (!verifyProofOfWork(powNonce, phoneNumber)) {
+                    res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+                    return;
+                }
+            } catch (powError: any) {
+                console.error("[PoW MIDDLEWARE EXCEPTION]:", powError.message || powError);
+                res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+                return;
+            }
         }
 
         const otpToken = crypto.randomInt(100000, 999999).toString();

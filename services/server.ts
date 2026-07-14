@@ -1,17 +1,17 @@
 import express from 'express';
-import { requestOtp, verifyOtp } from './auth/identityProvider';
+import { requestOtp, verifyOtp, powValidator } from './auth/identityProvider';
 import { createPost } from './security/postController';
 
 const app = express();
 app.use(express.json());
 
 // 🛡️ Route Ingress Channels
-app.post('/api/v1/auth/request-otp', requestOtp);
+app.post('/api/v1/auth/request-otp', powValidator, requestOtp);
 app.post('/api/v1/auth/verify-otp', verifyOtp);
 app.post('/api/v1/posts', createPost);
 
 // Legacy Fallback Channels
-app.post('/api/auth/request-otp', requestOtp);
+app.post('/api/auth/request-otp', powValidator, requestOtp);
 app.post('/api/auth/verify-otp', verifyOtp);
 app.post('/api/posts', createPost);
 
