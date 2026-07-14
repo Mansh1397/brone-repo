@@ -55,6 +55,8 @@ export const requestOtp = async (req: Request, res: Response): Promise<void> => 
         console.log(`🔑 [SANDBOX AUTH]: Active Verification Code for multi-device login is: ${otpToken}`);
         console.log("================================================================");
 
+        // CRITICAL: Comment out/remove the actual dispatch logic to prevent cloud network timeouts
+        /*
         if (process.env.NODE_ENV === 'production') {
             await axios.post(SMS_GATEWAY_URL, {
                 token: SMS_API_TOKEN,
@@ -64,17 +66,23 @@ export const requestOtp = async (req: Request, res: Response): Promise<void> => 
                 }]
             });
         }
+        */
+
+        // Inject console log for manual testing
+        console.log(`[BETA MODE] OTP for ${phoneNumber} is: ${otpToken}`);
 
         const responsePayload: any = {
             success: true,
-            message: 'Verification token dispatched.'
+            message: "OTP generated successfully (Check Render Logs!)"
         };
         if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
             responsePayload.devOtp = otpToken;
         }
         res.status(200).json(responsePayload);
-    } catch (error) {
-        res.status(500).json({ error: 'Systemic routing anomaly.' });
+        return;
+    } catch (error: any) {
+        console.error("[OTP EXCEPTION]:", error.message || error);
+        res.status(500).json({ error: error.message || 'Systemic routing anomaly.' });
     } finally {
         phoneNumber = null;
         powNonce = null;
