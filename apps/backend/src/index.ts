@@ -40,7 +40,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-pow-nonce']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-pow-nonce', 'x-brone-edge-token']
 }));
 
 // 🌐 Global Traffic Ingress Logger
