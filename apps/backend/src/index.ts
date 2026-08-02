@@ -18,6 +18,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'capacitor://localhost',
   'http://localhost',
+  'https://brone-repo.onrender.com',
   process.env.FRONTEND_DEPLOYED_URL
 ].filter(Boolean);
 
