@@ -13,6 +13,35 @@ const app = express();
 
 app.set("trust proxy", true);
 
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'capacitor://localhost',
+  'http://localhost',
+  process.env.FRONTEND_DEPLOYED_URL
+].filter(Boolean);
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    
+    // Strip trailing slashes for safer comparison
+    const cleanOrigin = origin.replace(/\/$/, "");
+    const cleanAllowed = allowedOrigins.map(url => url?.replace(/\/$/, ""));
+
+    if (cleanAllowed.includes(cleanOrigin) || process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    } else {
+      console.warn(`[CORS WARN] Rejected Origin: ${origin}`);
+      // Pass false instead of an Error to avoid 500 crashes
+      return callback(null, false); 
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-pow-nonce']
+}));
+
 // 🌐 Global Traffic Ingress Logger
 app.use((req, res, next) => {
   console.log(`\n📥 [INGRESS PACKET] ---------------------------------------`);
@@ -30,33 +59,9 @@ app.use((req, res, next) => {
   next();
 });
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'capacitor://localhost',
-  'http://localhost',
-  process.env.FRONTEND_DEPLOYED_URL // Allows hosted beta testing domain
-].filter(Boolean);
-
 // 1. RUNTIME INITIALIZATION SANITIZATION & SECURITY HEADERS
 app.use(helmet());
 app.disable("x-powered-by");
-
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
-      return callback(null, true);
-    } else {
-      return callback(new Error('CORS policy rejection: Origin not allowed.'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-pow-nonce']
-}));
 
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "frame-ancestors 'none';");
