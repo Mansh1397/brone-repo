@@ -30,46 +30,33 @@ app.use((req, res, next) => {
   next();
 });
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://192.168.29.42:5173")
-  .split(",")
-  .map(o => o.trim())
-  .filter(Boolean);
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'capacitor://localhost',
+  'http://localhost',
+  process.env.FRONTEND_DEPLOYED_URL // Allows hosted beta testing domain
+].filter(Boolean);
 
 // 1. RUNTIME INITIALIZATION SANITIZATION & SECURITY HEADERS
 app.use(helmet());
 app.disable("x-powered-by");
 
-// CORS & ORIGIN GATEWAY FIREWALL (Blocks requests before evaluating asymmetric signatures)
-app.use((req: any, res: any, next: any) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    const isAllowed = allowedOrigins.includes(origin) ||
-      origin.includes("192.168.") ||
-      origin.includes("10.") ||
-      origin.includes("localhost") ||
-      origin.includes("127.0.0.1") ||
-      origin.startsWith("capacitor://") ||
-      origin.startsWith("ionic://");
-    if (!isAllowed) {
-      res.setHeader("Connection", "close");
-      return res.status(403).json({ error: "Forbidden: Unauthorized Origin" });
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    } else {
+      return callback(new Error('CORS policy rejection: Origin not allowed.'));
     }
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-
-    // 🎯 Added Cache-Control to prevent mobile preflight blocks
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type,Authorization,X-Brone-Edge-Signature,X-Brone-Origin-Signature,X-Brone-Edge-Token,Cache-Control"
-    );
-  }
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
-  }
-  next();
-});
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-pow-nonce']
+}));
 
 app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "frame-ancestors 'none';");
