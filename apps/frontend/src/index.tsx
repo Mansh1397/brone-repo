@@ -2,12 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { AppShell } from "./components/layout/AppShell";
 import "./index.css";
-
-import { Buffer } from 'buffer';
-if (typeof window !== 'undefined' && !window.Buffer) {
-  window.Buffer = Buffer;
-}
-
 // Function to handle conditional MSW initialization
 async function prepareApp() {
   // Only start mocks in development environment
