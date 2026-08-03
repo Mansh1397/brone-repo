@@ -301,48 +301,50 @@ v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/increment", handleMetricIncrement);
 
 const getAuthServiceUrl = () => {
-  const url = process.env.VITE_API_URL || "http://127.0.0.1:3000";
+  const url = process.env.INTERNAL_AUTH_URL || process.env.VITE_API_URL || "http://127.0.0.1:3000";
   return url.endsWith("/") ? url.slice(0, -1) : url;
 };
 
 const handleRequestOtp = async (req: any, res: any) => {
+  const targetUrl = `${getAuthServiceUrl()}/api/auth/request-otp`;
   try {
-    const response = await fetch(`${getAuthServiceUrl()}/api/auth/request-otp`, {
+    const response = await fetch(targetUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body)
     });
 
     if (!response.ok) {
-      console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool.");
+      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}`);
       return res.status(response.status).json({ error: "Identity validation failed." });
     }
 
     const data = await response.json();
     return res.status(response.status).json(data);
   } catch (error: any) {
-    console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Error:", error.message || error);
+    console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Target URL: ${targetUrl}. Network Error: ${error.message || error} (Code: ${error.code || 'UNKNOWN'})`);
     return res.status(500).json({ error: "Gateway authentication proxy failure." });
   }
 };
 
 const handleVerifyOtp = async (req: any, res: any) => {
+  const targetUrl = `${getAuthServiceUrl()}/api/auth/verify-otp`;
   try {
-    const response = await fetch(`${getAuthServiceUrl()}/api/auth/verify-otp`, {
+    const response = await fetch(targetUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body)
     });
 
     if (!response.ok) {
-      console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool.");
+      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}`);
       return res.status(response.status).json({ error: "Identity validation failed." });
     }
 
     const data = await response.json();
     return res.status(response.status).json(data);
   } catch (error: any) {
-    console.error("[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Error:", error.message || error);
+    console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Target URL: ${targetUrl}. Network Error: ${error.message || error} (Code: ${error.code || 'UNKNOWN'})`);
     return res.status(500).json({ error: "Gateway authentication proxy failure." });
   }
 };

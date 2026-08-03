@@ -2,6 +2,9 @@
   "name": "@brone/backend",
   "version": "1.0.0",
   "main": "src/index.ts",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "node --expose-gc ../../node_modules/jest/bin/jest.js -c ../../jest.config.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
