@@ -1,15 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
 import argon2 from 'argon2';
 import crypto from 'crypto';
-import { Client } from 'pg';
 import Redis from 'ioredis';
 import axios from 'axios';
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-const pgClient = new Client({ connectionString: process.env.DATABASE_URL });
-pgClient.connect().catch((err) => {
-    console.error("[IDENTITY PROVIDER] Failed to connect to pg database: ", err);
-});
 
 // Transient sandbox OTP cache (in-memory)
 interface OtpEntry {
@@ -169,21 +164,26 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
             return;
         }
 
-        // 3. Persist client public key in postgres
-        try {
-            await pgClient.query(
-                'INSERT INTO user_identities (public_key) VALUES ($1) ON CONFLICT DO NOTHING',
-                [clientPublicKey]
-            );
-        } catch (dbErr) {
-            // Quietly ignore pg errors in sandbox mode if pg is offline
-        }
+        // Generate a stateless, anonymous JWT token containing a completely random identifier
+        const header = { alg: "HS256", typ: "JWT" };
+        const payload = { jti: crypto.randomUUID(), sub: "anonymous_actor" };
+        const secret = process.env.JWT_SECRET || "default_local_jwt_secret";
+        const base64UrlEncode = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+        
+        const encodedHeader = base64UrlEncode(header);
+        const encodedPayload = base64UrlEncode(payload);
+        
+        const signature = crypto.createHmac("sha256", secret)
+            .update(`${encodedHeader}.${encodedPayload}`)
+            .digest("base64url");
+            
+        const anonymousToken = `${encodedHeader}.${encodedPayload}.${signature}`;
 
-        const mockBlindTokenSignature = crypto.randomBytes(64).toString('hex');
         await enforceTimingPadding();
         res.status(200).json({
             success: true,
-            blindVoucherEnvelope: mockBlindTokenSignature,
+            blindVoucherEnvelope: anonymousToken,
+            token: anonymousToken,
             message: 'Identity authenticated. Sever active socket and cycle routing states now.'
         });
     } catch (error) {
