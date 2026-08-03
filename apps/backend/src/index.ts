@@ -315,9 +315,20 @@ const handleRequestOtp = async (req: any, res: any) => {
   let targetUrl = "Unknown (URL resolution pending)";
   try {
     targetUrl = `${getAuthServiceUrl()}/api/auth/request-otp`;
+    
+    const { host, connection, ...forwardHeaders } = req.headers;
+    const cleanHeaders: Record<string, string> = {};
+    for (const key of Object.keys(forwardHeaders)) {
+      const val = forwardHeaders[key];
+      if (val !== undefined) {
+        cleanHeaders[key] = Array.isArray(val) ? val.join(", ") : String(val);
+      }
+    }
+    cleanHeaders['Content-Type'] = 'application/json';
+
     const response = await fetch(targetUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: cleanHeaders,
       body: JSON.stringify(req.body)
     });
 
@@ -338,9 +349,20 @@ const handleVerifyOtp = async (req: any, res: any) => {
   let targetUrl = "Unknown (URL resolution pending)";
   try {
     targetUrl = `${getAuthServiceUrl()}/api/auth/verify-otp`;
+    
+    const { host, connection, ...forwardHeaders } = req.headers;
+    const cleanHeaders: Record<string, string> = {};
+    for (const key of Object.keys(forwardHeaders)) {
+      const val = forwardHeaders[key];
+      if (val !== undefined) {
+        cleanHeaders[key] = Array.isArray(val) ? val.join(", ") : String(val);
+      }
+    }
+    cleanHeaders['Content-Type'] = 'application/json';
+
     const response = await fetch(targetUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: cleanHeaders,
       body: JSON.stringify(req.body)
     });
 
