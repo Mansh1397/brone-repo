@@ -321,7 +321,8 @@ const getAuthServiceUrl = () => {
 const handleRequestOtp = async (req: any, res: any) => {
   let targetUrl = "Unknown (URL resolution pending)";
   try {
-    targetUrl = `${getAuthServiceUrl()}/api/auth/request-otp`;
+    const targetPath = req.originalUrl || req.url;
+    targetUrl = `${getAuthServiceUrl()}${targetPath}`;
     
     const { host, connection, ...forwardHeaders } = req.headers;
     const cleanHeaders: Record<string, string> = {};
@@ -356,7 +357,8 @@ const handleRequestOtp = async (req: any, res: any) => {
 const handleVerifyOtp = async (req: any, res: any) => {
   let targetUrl = "Unknown (URL resolution pending)";
   try {
-    targetUrl = `${getAuthServiceUrl()}/api/auth/verify-otp`;
+    const targetPath = req.originalUrl || req.url;
+    targetUrl = `${getAuthServiceUrl()}${targetPath}`;
     
     const { host, connection, ...forwardHeaders } = req.headers;
     const cleanHeaders: Record<string, string> = {};
