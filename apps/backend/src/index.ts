@@ -8,6 +8,7 @@ import { handleBlindStamp, getPublicKeyConfig } from "./controllers/stampControl
 import { handleMetricIncrement } from "./controllers/ledgerController";
 import { initializeApplicationServer, configureServerTimeouts } from "./utils/bootstrap";
 import { pool } from './controllers/ringValidator';
+import { powValidator, requestOtp, verifyOtp } from "./controllers/identityProvider";
 
 const app = express();
 
@@ -307,91 +308,8 @@ v1Router.post("/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/increment", handleMetricIncrement);
 
-const getAuthServiceUrl = () => {
-  const url = process.env.INTERNAL_AUTH_URL;
-  if (!url) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error("INTERNAL_AUTH_URL environment variable is missing in production environment");
-    }
-    return "http://127.0.0.1:3000";
-  }
-  return url.endsWith("/") ? url.slice(0, -1) : url;
-};
-
-const handleRequestOtp = async (req: any, res: any) => {
-  let targetUrl = "Unknown (URL resolution pending)";
-  try {
-    const targetPath = req.originalUrl || req.url;
-    targetUrl = `${getAuthServiceUrl()}${targetPath}`;
-    
-    const { host, connection, ...forwardHeaders } = req.headers;
-    const cleanHeaders: Record<string, string> = {};
-    for (const key of Object.keys(forwardHeaders)) {
-      const val = forwardHeaders[key];
-      if (val !== undefined) {
-        cleanHeaders[key] = Array.isArray(val) ? val.join(", ") : String(val);
-      }
-    }
-    cleanHeaders['Content-Type'] = 'application/json';
-
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: cleanHeaders,
-      body: JSON.stringify(req.body)
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => 'Unable to parse response body');
-      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}. Reason: ${errorBody}`);
-      return res.status(response.status).send(errorBody);
-    }
-
-    const data = await response.json();
-    return res.status(response.status).json(data);
-  } catch (error: any) {
-    console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Target URL: ${targetUrl}. Network/Validation Error: ${error.message || error} (Code: ${error.code || 'UNKNOWN'})`);
-    return res.status(500).json({ error: "Gateway authentication proxy failure." });
-  }
-};
-
-const handleVerifyOtp = async (req: any, res: any) => {
-  let targetUrl = "Unknown (URL resolution pending)";
-  try {
-    const targetPath = req.originalUrl || req.url;
-    targetUrl = `${getAuthServiceUrl()}${targetPath}`;
-    
-    const { host, connection, ...forwardHeaders } = req.headers;
-    const cleanHeaders: Record<string, string> = {};
-    for (const key of Object.keys(forwardHeaders)) {
-      const val = forwardHeaders[key];
-      if (val !== undefined) {
-        cleanHeaders[key] = Array.isArray(val) ? val.join(", ") : String(val);
-      }
-    }
-    cleanHeaders['Content-Type'] = 'application/json';
-
-    const response = await fetch(targetUrl, {
-      method: "POST",
-      headers: cleanHeaders,
-      body: JSON.stringify(req.body)
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => 'Unable to parse response body');
-      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}. Reason: ${errorBody}`);
-      return res.status(response.status).send(errorBody);
-    }
-
-    const data = await response.json();
-    return res.status(response.status).json(data);
-  } catch (error: any) {
-    console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Target URL: ${targetUrl}. Network/Validation Error: ${error.message || error} (Code: ${error.code || 'UNKNOWN'})`);
-    return res.status(500).json({ error: "Gateway authentication proxy failure." });
-  }
-};
-
-v1Router.post("/auth/request-otp", handleRequestOtp);
-v1Router.post("/auth/verify-otp", handleVerifyOtp);
+v1Router.post("/auth/request-otp", powValidator, requestOtp);
+v1Router.post("/auth/verify-otp", verifyOtp);
 
 const mockEncryptedData: Record<string, string> = {
   "QmPotholeReported": "ENC_GCM:c3BsaXRfYnl0ZXNfZGF0YQ==",
