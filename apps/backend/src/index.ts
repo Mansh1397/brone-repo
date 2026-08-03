@@ -94,7 +94,9 @@ app.use((req: any, res: any, next: any) => {
     req.path === "/api/auth/request-otp" ||
     req.path === "/auth/verify-otp" ||
     req.path === "/api/v1/auth/verify-otp" ||
-    req.path === "/api/auth/verify-otp";
+    req.path === "/api/auth/verify-otp" ||
+    req.path === "/feed" ||
+    req.path === "/api/v1/feed";
 
   if (isAuthRoute) {
     next();
@@ -221,16 +223,53 @@ app.use((req: any, res: any, next: any) => {
 // Look for your auth middleware definition file (e.g., apps/backend/src/middleware/auth.ts)
 export const requireAuth = (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization || "";
-  if (authHeader.startsWith("Bearer ")) {
-    const token = authHeader.substring(7);
-    if (token && token !== "null" && token !== "undefined") {
-      req.user = { id: "authenticated-user" };
-      next();
-      return;
-    }
+  if (!authHeader.startsWith("Bearer ")) {
+    return res.status(403).json({ error: "Forbidden", reason: "Missing or malformed Authorization header (expected Bearer <token>)" });
   }
 
-  res.status(403).json({ error: "Forbidden: Session/token verification failed" });
+  const token = authHeader.substring(7);
+  if (!token || token === "null" || token === "undefined") {
+    return res.status(403).json({ error: "Forbidden", reason: "Authorization token is null or undefined" });
+  }
+
+  // Cryptographically verify the manual stateless JWT
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return res.status(403).json({ error: "Forbidden", reason: "Token format is invalid (expected 3 parts for JWS/JWT)" });
+  }
+
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const secret = process.env.JWT_SECRET || "beta_development_secret";
+
+  const expectedSignature = crypto.createHmac("sha256", secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64url");
+
+  // Constant-time compare
+  try {
+    const sigBuf = Buffer.from(signature);
+    const expectedBuf = Buffer.from(expectedSignature);
+    
+    let match = true;
+    if (sigBuf.length !== expectedBuf.length) {
+      match = false;
+    }
+    const comparisonBuf = match ? sigBuf : expectedBuf;
+    const isEqual = crypto.timingSafeEqual(expectedBuf, comparisonBuf) && match;
+
+    if (!isEqual) {
+      return res.status(403).json({ error: "Forbidden", reason: "JWT Signature verification failed" });
+    }
+
+    // Decode payload to extract actor ID (jti)
+    const payloadStr = Buffer.from(encodedPayload, 'base64url').toString('utf8');
+    const payload = JSON.parse(payloadStr);
+
+    req.user = { id: payload.jti || "anonymous_actor" };
+    next();
+  } catch (err: any) {
+    return res.status(403).json({ error: "Forbidden", reason: `Token verification encountered an internal exception: ${err.message || err}` });
+  }
 };
 
 const handleGetFeed = async (req: any, res: any) => {
