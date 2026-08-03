@@ -81,12 +81,19 @@ app.use(
 
 // 3. ANTISYMMETRIC PERIMETER EDGE VALIDATION
 app.use((req: any, res: any, next: any) => {
+  if (process.env.BYPASS_SECURITY_CHECKS === 'true') {
+    console.warn('[AUTH POOL] Bypassing strict security validations for beta deployment.');
+    return next();
+  }
+
   // Bypass all authentication/OTP routes from perimeter signature checks
   const isAuthRoute =
     req.path === "/auth/request-otp" ||
     req.path === "/api/v1/auth/request-otp" ||
+    req.path === "/api/auth/request-otp" ||
     req.path === "/auth/verify-otp" ||
-    req.path === "/api/v1/auth/verify-otp";
+    req.path === "/api/v1/auth/verify-otp" ||
+    req.path === "/api/auth/verify-otp";
 
   if (isAuthRoute) {
     next();
@@ -138,7 +145,7 @@ app.use((req: any, res: any, next: any) => {
   const edgeSignatureHeader = req.headers["x-brone-edge-signature"];
   if (!edgeSignatureHeader || typeof edgeSignatureHeader !== "string") {
     res.setHeader("Connection", "close");
-    res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden", reason: "Edge signature header (x-brone-edge-signature) is missing or invalid" });
     req.socket.destroy();
     return;
   }
@@ -146,7 +153,7 @@ app.use((req: any, res: any, next: any) => {
   const parts = edgeSignatureHeader.split(".");
   if (parts.length !== 2) {
     res.setHeader("Connection", "close");
-    res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden", reason: "Edge signature format is invalid (expected timestamp.signature)" });
     req.socket.destroy();
     return;
   }
@@ -155,7 +162,7 @@ app.use((req: any, res: any, next: any) => {
   const timestamp = parseInt(tsStr, 10);
   if (isNaN(timestamp)) {
     res.setHeader("Connection", "close");
-    res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden", reason: "Edge signature timestamp is not a valid number" });
     req.socket.destroy();
     return;
   }
@@ -164,7 +171,7 @@ app.use((req: any, res: any, next: any) => {
   const now = Math.floor(Date.now() / 1000);
   if (Math.abs(now - timestamp) > 10) {
     res.setHeader("Connection", "close");
-    res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden", reason: `Edge signature timestamp has drifted beyond the allowed 10-second window (diff: ${Math.abs(now - timestamp)}s)` });
     req.socket.destroy();
     return;
   }
@@ -195,13 +202,13 @@ app.use((req: any, res: any, next: any) => {
 
     if (!isEqual) {
       res.setHeader("Connection", "close");
-      res.status(403).json({ error: "Forbidden" });
+      res.status(403).json({ error: "Forbidden", reason: "Edge signature HMAC mismatch" });
       req.socket.destroy();
       return;
     }
   } catch (err) {
     res.setHeader("Connection", "close");
-    res.status(403).json({ error: "Forbidden" });
+    res.status(403).json({ error: "Forbidden", reason: "Edge signature verification encountered an internal exception" });
     req.socket.destroy();
     return;
   }
@@ -678,7 +685,7 @@ app.use("/", v1Router);
 // 5. ROUTE DISCOVERY TIMING IMMUNIZATION
 app.all("*", (req: any, res: any) => {
   res.setHeader("Connection", "close");
-  res.status(403).json({ error: "Forbidden" });
+  res.status(403).json({ error: "Forbidden", reason: "Route discovery timing immunization blocker (unmapped path)" });
   req.socket.destroy();
 });
 
