@@ -43,6 +43,7 @@ export const AppShell: React.FC = () => {
           };
           if (stored.blindVoucherEnvelope) {
             localStorage.setItem('accessToken', stored.blindVoucherEnvelope);
+            localStorage.setItem('brone_auth_token', stored.blindVoucherEnvelope);
           }
           setIsAuthenticated(true);
         }

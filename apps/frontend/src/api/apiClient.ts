@@ -152,6 +152,17 @@ apiClient.interceptors.request.use(
       }
     }
 
+    // Attach Authorization header if token exists in storage or in initial config headers
+    const localToken = typeof localStorage !== 'undefined' ? (localStorage.getItem('brone_auth_token') || localStorage.getItem('accessToken')) : null;
+    if (localToken) {
+      sanitizedHeaders['Authorization'] = `Bearer ${localToken}`;
+    } else if (config.headers) {
+      const auth = config.headers['Authorization'] || config.headers['authorization'];
+      if (auth) {
+        sanitizedHeaders['Authorization'] = auth as string;
+      }
+    }
+
     // Replace the headers object entirely to destroy non-essential browser tracking headers
     config.headers = sanitizedHeaders as any;
 
