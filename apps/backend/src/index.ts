@@ -333,8 +333,9 @@ const handleRequestOtp = async (req: any, res: any) => {
     });
 
     if (!response.ok) {
-      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}`);
-      return res.status(response.status).json({ error: "Identity validation failed." });
+      const errorBody = await response.text().catch(() => 'Unable to parse response body');
+      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}. Reason: ${errorBody}`);
+      return res.status(response.status).send(errorBody);
     }
 
     const data = await response.json();
@@ -367,8 +368,9 @@ const handleVerifyOtp = async (req: any, res: any) => {
     });
 
     if (!response.ok) {
-      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}`);
-      return res.status(response.status).json({ error: "Identity validation failed." });
+      const errorBody = await response.text().catch(() => 'Unable to parse response body');
+      console.error(`[IDENTITY CONTAINER REJECTION]: Gateway proxy received an invalid state execution from internal auth pool. Status: ${response.status}. Reason: ${errorBody}`);
+      return res.status(response.status).send(errorBody);
     }
 
     const data = await response.json();
