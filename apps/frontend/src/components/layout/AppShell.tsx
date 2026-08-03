@@ -41,6 +41,9 @@ export const AppShell: React.FC = () => {
             privateKey,
             publicKeyHex: stored.publicKeyHex,
           };
+          if (stored.blindVoucherEnvelope) {
+            localStorage.setItem('accessToken', stored.blindVoucherEnvelope);
+          }
           setIsAuthenticated(true);
         }
       } catch (err) {

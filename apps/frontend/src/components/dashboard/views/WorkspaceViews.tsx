@@ -9,7 +9,7 @@ import {
   RSAPublicKey
 } from "@brone/crypto-core";
 import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
-import { getOrCreateStorageKey } from "../../../utils/storage";
+import { getOrCreateStorageKey, loadAndDecryptState } from "../../../utils/storage";
 
 // 1. Get mock CID from text
 const getMockCID = (text: string): string => {
@@ -292,15 +292,17 @@ export const HomeFeed: React.FC = () => {
       try {
         // 🔑 Extract your volatile hex key / token from your vault container
         const secureHexKey = localStorage.getItem('brone-secure-vault') || '';
+        const stored = await loadAndDecryptState();
+        const token = stored?.blindVoucherEnvelope || localStorage.getItem('accessToken') || '';
 
         // Add a log right before your fetch to verify the token actually exists on your phone
-        console.log("Current Auth Token:", localStorage.getItem('accessToken'));
+        console.log("Current Auth Token:", token);
 
         const response = await apiClient.get("feed", {
           signal: abortController.signal,
           headers: {
             "Cache-Control": "no-store, no-cache, must-revalidate",
-            "Authorization": `Bearer ${localStorage.getItem('accessToken')}`, // 👈 Must not be null/undefined
+            "Authorization": `Bearer ${token}`, // 👈 Must not be null/undefined
           },
         });
 

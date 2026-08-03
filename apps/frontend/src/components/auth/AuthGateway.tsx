@@ -144,6 +144,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
 
         // Save to secure encrypted local storage
         await encryptAndSaveState(sessionState);
+        localStorage.setItem('accessToken', blindVoucherEnvelope);
         addLog("[System] Identity saved securely. Redirecting to dashboard...");
 
         setTimeout(() => {
