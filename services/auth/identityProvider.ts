@@ -51,74 +51,11 @@ export const powValidator = (req: Request, res: Response, next: NextFunction) =>
 };
 
 export const requestOtp = async (req: Request, res: Response): Promise<void> => {
-    let { phoneNumber, powNonce } = req.body;
-    try {
-        const shouldBypass = process.env.NODE_ENV === "development" || process.env.BYPASS_POW === "true";
-        if (!shouldBypass) {
-            try {
-                if (!verifyProofOfWork(powNonce, phoneNumber)) {
-                    res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-                    return;
-                }
-            } catch (powError: any) {
-                console.error("[PoW MIDDLEWARE EXCEPTION]:", powError.message || powError);
-                res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-                return;
-            }
-        }
-
-        const otpToken = crypto.randomInt(100000, 999999).toString();
-
-        // 1. Store code in transient in-memory cache (60 seconds expiration)
-        sandboxOtpCache.set(phoneNumber, {
-            code: otpToken,
-            expiresAt: Date.now() + 60000
-        });
-
-        // 2. Fallback store in Redis to keep tests/compatibility intact
-        try {
-            await redis.set(`otp:${phoneNumber}`, otpToken, 'EX', 120);
-        } catch (redisErr) {
-            // Quietly ignore Redis errors in sandbox mode
-        }
-
-        // 3. Print code directly to terminal stdout with highly visible banner
-        console.log("================================================================");
-        console.log(`🔑 [SANDBOX AUTH]: Active Verification Code for multi-device login is: ${otpToken}`);
-        console.log("================================================================");
-
-        // CRITICAL: Comment out/remove the actual dispatch logic to prevent cloud network timeouts
-        /*
-        if (process.env.NODE_ENV === 'production') {
-            await axios.post(SMS_GATEWAY_URL, {
-                token: SMS_API_TOKEN,
-                sms: [{
-                    message: `Your Brone verification code is: ${otpToken}. Valid for 2 minutes.`,
-                    recipients: [{ msisdn: phoneNumber.replace('+', '') }]
-                }]
-            });
-        }
-        */
-
-        // Inject console log for manual testing
-        console.log(`[BETA MODE] OTP for ${phoneNumber} is: ${otpToken}`);
-
-        const responsePayload: any = {
-            success: true,
-            message: "OTP generated successfully (Check Render Logs!)"
-        };
-        if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
-            responsePayload.devOtp = otpToken;
-        }
-        res.status(200).json(responsePayload);
-        return;
-    } catch (error: any) {
-        console.error("[OTP EXCEPTION]:", error.message || error);
-        res.status(500).json({ error: error.message || 'Systemic routing anomaly.' });
-    } finally {
-        phoneNumber = null;
-        powNonce = null;
-    }
+    res.status(200).json({
+        success: true,
+        message: "[BETA MODE]: Hardcoded OTP bypass active. Use code 123456."
+    });
+    return;
 };
 
 export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
@@ -130,6 +67,30 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     };
 
     try {
+        const otp = req.body.otp || req.body.otpCode;
+        if (otp === '123456' || otp === 123456) {
+            const header = { alg: "HS256", typ: "JWT" };
+            const payload = { jti: crypto.randomUUID(), sub: "anonymous_actor" };
+            const secret = process.env.JWT_SECRET || "beta_development_secret";
+            const base64UrlEncode = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+            
+            const encodedHeader = base64UrlEncode(header);
+            const encodedPayload = base64UrlEncode(payload);
+            
+            const signature = crypto.createHmac("sha256", secret)
+                .update(`${encodedHeader}.${encodedPayload}`)
+                .digest("base64url");
+                
+            const anonymousJwtToken = `${encodedHeader}.${encodedPayload}.${signature}`;
+
+            res.status(200).json({
+                success: true,
+                token: anonymousJwtToken,
+                blindVoucherEnvelope: anonymousJwtToken
+            });
+            return;
+        }
+
         if (!clientPublicKey) {
             await enforceTimingPadding();
             res.status(400).json({ error: 'Missing client public key.' });
