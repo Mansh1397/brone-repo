@@ -52,7 +52,7 @@ export async function guardAgainstDoubleSpend(
         // 3. ATOMIC ISOLATION & INTENT FORCED QUERY
         const selectResult = await client.query({
           name: "select_nullifier",
-          text: "SELECT 1 FROM spent_nullifiers WHERE key_image = $1 FOR UPDATE;",
+          text: "SELECT 1 FROM signatures WHERE tx_hash = $1 FOR UPDATE;",
           values: [keyImageStr]
         });
 
@@ -65,7 +65,7 @@ export async function guardAgainstDoubleSpend(
         // 4. REGISTRY INSERTION
         await client.query({
           name: "insert_nullifier",
-          text: "INSERT INTO spent_nullifiers (key_image, spent_at) VALUES ($1, NOW());",
+          text: "INSERT INTO signatures (tx_hash) VALUES ($1);",
           values: [keyImageStr]
         });
 

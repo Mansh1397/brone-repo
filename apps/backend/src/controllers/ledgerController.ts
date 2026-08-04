@@ -68,20 +68,19 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
         values: [safeSignature]
       });
 
-      // Apply metric updates to accumulated ledger
-      for (const [metricName, incrementValue] of Object.entries(metric_updates)) {
-        // ✅ FIXED: Clean truncation
-        const safeMetricName = metricName.substring(0, 64);
-        await client.query({
-          text: `
-            INSERT INTO reputation_ledger (reputation_key, metric_name, value, updated_at)
-            VALUES ($1, $2, $3, NOW())
-            ON CONFLICT (reputation_key, metric_name)
-            DO UPDATE SET value = reputation_ledger.value + EXCLUDED.value, updated_at = NOW();
-          `,
-          values: [safeReputationKey, safeMetricName, BigInt(incrementValue as number)]
-        });
-      }
+      // Apply metric updates to Zero-Knowledge reputation ledger
+      const blindTokenHash = req.body.blind_token_hash || crypto.createHash("sha256").update(reputation_key + nonce).digest("hex");
+      const metricDelta = Number(Object.values(metric_updates)[0] || 1);
+      const ecdsaSignature = signature;
+
+      await client.query({
+        text: `
+          INSERT INTO reputation_ledger (blind_token_hash, metric_delta, ecdsa_signature)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (blind_token_hash) DO NOTHING;
+        `,
+        values: [blindTokenHash, metricDelta, ecdsaSignature]
+      });
 
       await client.query("COMMIT");
     } catch (dbErr: any) {

@@ -10,8 +10,8 @@ export async function runMaintenance(): Promise<void> {
     await client.query("RESET ALL;");
 
     // 3. NON-BLOCKING CONCURRENT RECLAIM (VACUUM ANALYZE)
-    await client.query("VACUUM ANALYZE spent_nullifiers;");
-    await client.query("VACUUM ANALYZE ephemeral_sessions;");
+    await client.query("VACUUM ANALYZE nullifiers;");
+    await client.query("VACUUM ANALYZE signatures;");
 
     console.log("[MAINTENANCE] Execution completed successfully");
   } catch (error) {

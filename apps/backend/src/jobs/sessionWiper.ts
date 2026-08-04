@@ -21,11 +21,11 @@ export async function executePurgeCycle(pool: Pool): Promise<number> {
     // hardcoded production data retention ceiling (exactly NOW() - INTERVAL '24 hours')
     boundary = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    // Iterative chunk deletion for spent_nullifiers
+    // Iterative chunk deletion for nullifiers
     while (true) {
       // CONCURRENT SKIP-LOCKED STRIDE
       const res = await client.query({
-        text: "DELETE FROM spent_nullifiers WHERE id IN (SELECT id FROM spent_nullifiers WHERE spent_at < $1 LIMIT 500 FOR UPDATE SKIP LOCKED);",
+        text: "DELETE FROM nullifiers WHERE nullifier_hash IN (SELECT nullifier_hash FROM nullifiers WHERE spent_at < $1 LIMIT 500 FOR UPDATE SKIP LOCKED);",
         values: [boundary]
       });
       const affected = res.rowCount || 0;
@@ -37,10 +37,10 @@ export async function executePurgeCycle(pool: Pool): Promise<number> {
       await sleep(150);
     }
 
-    // Iterative chunk deletion for ephemeral_sessions
+    // Iterative chunk deletion for signatures
     while (true) {
       const res = await client.query({
-        text: "DELETE FROM ephemeral_sessions WHERE id IN (SELECT id FROM ephemeral_sessions WHERE expires_at < $1 LIMIT 500 FOR UPDATE SKIP LOCKED);",
+        text: "DELETE FROM signatures WHERE tx_hash IN (SELECT tx_hash FROM signatures WHERE recorded_at < $1 LIMIT 500 FOR UPDATE SKIP LOCKED);",
         values: [boundary]
       });
       const affected = res.rowCount || 0;
@@ -52,8 +52,8 @@ export async function executePurgeCycle(pool: Pool): Promise<number> {
     }
 
     // SEQUENTIAL CACHE & METADATA RECLAIM (VACUUM targeted tables)
-    await client.query("VACUUM spent_nullifiers;");
-    await client.query("VACUUM ephemeral_sessions;");
+    await client.query("VACUUM nullifiers;");
+    await client.query("VACUUM signatures;");
 
     // OPAQUE LOGGING INSULATION
     console.log("[PURGE] Execution completed successfully");

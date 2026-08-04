@@ -619,18 +619,6 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
     console.log(`[SPRT EVALUATION] IPFS Hash: ${ipfs_hash}, Log-Likelihood: ${logLikelihood}, Verdict: ${verdict}`);
 
-    // 7. Update metrics inside reputation_ledger for global analytics
-    const metricName = `arbitration_${vote_decision.toLowerCase()}`;
-    await pool.query({
-      text: `
-        INSERT INTO reputation_ledger (reputation_key, metric_name, value, updated_at)
-        VALUES ('global_ledger', $1, 1, NOW())
-        ON CONFLICT (reputation_key, metric_name)
-        DO UPDATE SET value = reputation_ledger.value + 1, updated_at = NOW();
-      `,
-      values: [metricName]
-    });
-
     return res.status(200).json({
       success: true,
       status: "success",
