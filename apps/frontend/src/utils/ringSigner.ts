@@ -36,29 +36,38 @@ function hashChallenge(message: string, L: any, R: any): string {
 }
 
 export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
+  const decoyRing: string[] = [];
+
   try {
     const response = await apiClient.get('public-keys');
-    if (Array.isArray(response.data) && response.data.length > 0) {
-      const keys = [...response.data];
-      const decoyRing: string[] = [];
+    if (Array.isArray(response.data)) {
+      const keys = [...response.data].filter(k => typeof k === 'string' && k.length > 0);
       while (decoyRing.length < n && keys.length > 0) {
         const randIdx = Math.floor(Math.random() * keys.length);
-        decoyRing.push(keys.splice(randIdx, 1)[0]);
+        const selected = keys.splice(randIdx, 1)[0];
+        if (!decoyRing.includes(selected)) {
+          decoyRing.push(selected);
+        }
       }
-      return decoyRing;
     }
   } catch (err) {
     console.warn("Failed to fetch decoy keys from network:", err);
   }
 
-  // Local fallback decoy keys if network query returns empty/errors
-  const fallbacks = [
-    "0437435f3dfd9ff7b5d1c68f237bf2d3ee824c965c2690ff357d6cd5637dbf7e3c",
-    "04a37bf2d3ee824c965c2690ff357d6cd5637dbf7e3c37435f3dfd9ff7b5d1c68f",
-    "04f7b5d1c68f237bf2d3ee824c965c2690ff357d6cd5637dbf7e3c37435f3dfd9f",
-    "04965c2690ff357d6cd5637dbf7e3c37435f3dfd9ff7b5d1c68f237bf2d3ee824"
-  ];
-  return fallbacks.slice(0, n);
+  // Generate missing mathematically valid decoy keys using the EC library to fill the ring
+  while (decoyRing.length < n) {
+    try {
+      const pair = ec.genKeyPair();
+      const pubHex = pair.getPublic().encode('hex', true);
+      if (!decoyRing.includes(pubHex)) {
+        decoyRing.push(pubHex);
+      }
+    } catch (e) {
+      // Keep trying
+    }
+  }
+
+  return decoyRing;
 }
 
 export function generateRingSignature(
@@ -82,10 +91,35 @@ export function generateRingSignature(
       ringHex.push(myPublicKeyHex);
     }
     ringHex.sort();
-    const signerIndex = ringHex.indexOf(myPublicKeyHex);
-    const n = ringHex.length;
 
-    const ringPoints = ringHex.map(hex => toPoint(hex));
+    // Map keys to points while protecting against invalid hex formats
+    const ringPoints: any[] = [];
+    const validRingHex: string[] = [];
+
+    for (const hex of ringHex) {
+      try {
+        const point = toPoint(hex);
+        ringPoints.push(point);
+        validRingHex.push(hex);
+      } catch (err) {
+        // Generate a mathematically valid point on the fly to replace the invalid one
+        let validPoint = null;
+        let validHex = "";
+        while (!validPoint) {
+          try {
+            const pair = ec.genKeyPair();
+            validHex = pair.getPublic().encode('hex', true);
+            validPoint = toPoint(validHex);
+          } catch (e) {}
+        }
+        ringPoints.push(validPoint);
+        validRingHex.push(validHex);
+      }
+    }
+
+    const signerIndex = validRingHex.indexOf(myPublicKeyHex);
+    const n = validRingHex.length;
+
     const Hp = ringPoints.map(p => hashToPoint(p));
 
     const privateKeyBN = key.getPriv();
@@ -121,7 +155,7 @@ export function generateRingSignature(
 
     return {
       message,
-      ring: ringHex,
+      ring: validRingHex,
       challenge: c[0],
       responses: s,
       keyImage: keyImageHex
