@@ -275,11 +275,13 @@ export const requireAuth = (req: any, res: any, next: any) => {
 
 const handleGetFeed = async (req: any, res: any) => {
   try {
+    const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, macro_region_cell_id AS geohash, created_at AS submittedat, 'APPROVED' AS status 
+      SELECT ipfs_hash, geohash, status, sprt_score, submitted_at 
       FROM decentralized_posts 
-      ORDER BY created_at DESC LIMIT 30
-    `);
+      WHERE geohash LIKE $1 AND status = 'APPROVED' 
+      ORDER BY submitted_at DESC LIMIT 50
+    `, [geohashFilter]);
 
     const posts = result.rows.map((row: any, index: number) => ({
       id: `post_db_${index}`,
@@ -289,7 +291,7 @@ const handleGetFeed = async (req: any, res: any) => {
       validations: 1,
       ipfs_hash: row.ipfs_hash,
       geohash: row.geohash,
-      submittedat: row.submittedat,
+      submittedat: row.submitted_at,
       description: ""
     }));
 
@@ -348,10 +350,13 @@ const mockEncryptedData: Record<string, string> = {};
 
 const handleGetArbitration = async (req: any, res: any) => {
   try {
+    const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, macro_region_cell_id FROM decentralized_posts 
-      ORDER BY created_at DESC LIMIT 30
-    `);
+      SELECT ipfs_hash, geohash, status, sprt_score, submitted_at 
+      FROM decentralized_posts 
+      WHERE geohash LIKE $1 AND status = 'PENDING' 
+      ORDER BY RANDOM() LIMIT 10
+    `, [geohashFilter]);
     return res.status(200).json(result.rows);
   } catch (error) {
     console.error("[ARBITRATION ERROR] Failed to fetch arbitration posts:", error);
@@ -446,28 +451,26 @@ const handlePostArbitration = async (req: any, res: any) => {
     }
 
     // Double-Spend Protection: check if signature already exists in signatures table
-    const replayCheck = await pool.query("SELECT signature FROM signatures WHERE signature = $1", [signature]);
+    const replayCheck = await pool.query("SELECT tx_hash FROM signatures WHERE tx_hash = $1", [signature]);
     if (replayCheck.rows.length > 0) {
       return res.status(409).json({ error: "Security Collision: Signature replay state detected." });
     }
 
     // Insert signature to prevent replay
-    const safeSignature = signature.substring(0, 130);
-    const safeReputationKey = reputation_key.substring(0, 130);
     await pool.query({
-      text: "INSERT INTO signatures (signature, reputation_key, metric_type, metric_value, created_at) VALUES ($1, $2, $3, $4, NOW())",
-      values: [safeSignature, safeReputationKey, 'post_submission', 1]
+      text: "INSERT INTO signatures (tx_hash) VALUES ($1) ON CONFLICT DO NOTHING;",
+      values: [signature]
     });
 
     // Second: Await Task 2 database insertion (only runs if Task 1 succeeds)
-    const geohashValue = String(blindedTransaction).substring(0, 32);
+    const geohashValue = String(blindedTransaction).substring(0, 20);
     await pool.query({
       text: `
-        INSERT INTO decentralized_posts (ipfs_hash, macro_region_cell_id, geohash, ring_signature, created_at)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at)
+        VALUES ($1, $2, $3, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
         ON CONFLICT (ipfs_hash) DO NOTHING;
       `,
-      values: [content, geohashValue, geohashValue, signature]
+      values: [content, geohashValue, signature]
     });
 
     return res.status(201).json({
