@@ -62,10 +62,10 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
       // Insert signature to prevent replay attacks
       await client.query({
         text: `
-          INSERT INTO signatures (signature, reputation_key, metric_type, metric_value, created_at)
-          VALUES ($1, $2, $3, $4, NOW());
+          INSERT INTO signatures (tx_hash)
+          VALUES ($1);
         `,
-        values: [safeSignature, safeReputationKey, metricType, metricValue]
+        values: [safeSignature]
       });
 
       // Apply metric updates to accumulated ledger
