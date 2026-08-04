@@ -9,41 +9,11 @@ import { handleMetricIncrement } from "./controllers/ledgerController";
 import { initializeApplicationServer, configureServerTimeouts } from "./utils/bootstrap";
 import { pool } from './controllers/ringValidator';
 import { powValidator, requestOtp, verifyOtp } from "./controllers/identityProvider";
+import { initDB } from "./utils/dbInit";
 
 const app = express();
 
 app.set("trust proxy", true);
-
-(async () => {
-  try {
-    // 1. Alter decentralized_posts to support geohash and ring_signature
-    await pool.query(`
-      ALTER TABLE decentralized_posts 
-      ADD COLUMN IF NOT EXISTS geohash VARCHAR(32),
-      ADD COLUMN IF NOT EXISTS ring_signature TEXT;
-    `);
-
-    // 2. Create nullifiers table for double-voting protection
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS nullifiers (
-        nullifier_hash VARCHAR(64) PRIMARY KEY,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-    `);
-
-    // 3. Create anonymous_votes table for anonymous vote tracking and SPRT evaluation
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS anonymous_votes (
-        id SERIAL PRIMARY KEY,
-        ipfs_hash VARCHAR(90) NOT NULL,
-        vote_decision VARCHAR(10) NOT NULL,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
-      );
-    `);
-  } catch (err: any) {
-    console.error("[DB INIT ERROR] Failed to run database schema upgrades:", err.message || err);
-  }
-})();
 
 const allowedOrigins = [
   'http://localhost:5173',
@@ -712,7 +682,15 @@ const PORT = parseInt(process.env.PORT || "3001", 10);
 const HOST = "0.0.0.0";
 
 if (process.env.NODE_ENV !== "test") {
-  initializeApplicationServer(app).then(() => {
+  initializeApplicationServer(app).then(async () => {
+    // Run DB initialization/migration on boot
+    try {
+      await initDB();
+    } catch (dbErr: any) {
+      console.error("[BOOTSTRAP] Fatal database initialization failure:", dbErr.message || dbErr);
+      process.exit(1);
+    }
+
     // 2. TypeScript will now match Overload 2 cleanly (number, string, callback)
     const server = app.listen(PORT, HOST, () => {
       console.log(`[RELAY PROXY] Server started globally on http://${HOST}:${PORT}`);
