@@ -65,6 +65,13 @@ export async function initDB(): Promise<void> {
       );
     `);
 
+    // Table 6: anonymous_public_keys
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS anonymous_public_keys (
+        public_key_hex VARCHAR(255) PRIMARY KEY
+      );
+    `);
+
     console.log('[DB] Zero-Knowledge schema verified.');
   } catch (error: any) {
     console.error("[DB FATAL] Database initialization/migration failed:", error.message || error);

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { mineProofOfWork } from "../../utils/pow";
 import { apiClient } from "../../api/apiClient";
 import { encryptAndSaveState } from "../../utils/storage";
+import { schedulePublicKeyRegistration } from "../../utils/cryptoSync";
 
 interface AuthGatewayProps {
   onAuthSuccess: (session: {
@@ -149,6 +150,9 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
         sessionStorage.setItem('accessToken', blindVoucherEnvelope);
         sessionStorage.setItem('brone_auth_token', blindVoucherEnvelope);
         addLog("[System] Identity saved securely. Redirecting to dashboard...");
+
+        // Temporal correlation decoupling jitter (15s to 5m delay)
+        schedulePublicKeyRegistration(publicKeyHex);
 
         setTimeout(() => {
           onAuthSuccess({

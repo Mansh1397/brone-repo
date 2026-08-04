@@ -312,15 +312,34 @@ v1Router.post("/reporting/increment", handleMetricIncrement);
 
 const handleGetPublicKeys = async (req: any, res: any) => {
   try {
-    const result = await pool.query("SELECT public_key FROM user_identities LIMIT 20");
-    const keys = result.rows.map((row: any) => row.public_key);
+    const result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY RANDOM() LIMIT 11;");
+    const keys = result.rows.map((row: any) => row.public_key_hex);
     return res.status(200).json(keys);
   } catch (error: any) {
     console.error("[KEYS ERROR] Failed to fetch public keys:", error);
     return res.status(200).json([]);
   }
 };
-v1Router.get("/public-keys", requireAuth, handleGetPublicKeys);
+
+const handleRegisterPublicKey = async (req: any, res: any) => {
+  try {
+    const { public_key_hex } = req.body;
+    if (!public_key_hex) {
+      return res.status(400).json({ error: "Missing public_key_hex payload" });
+    }
+    await pool.query({
+      text: "INSERT INTO anonymous_public_keys (public_key_hex) VALUES ($1) ON CONFLICT DO NOTHING;",
+      values: [public_key_hex]
+    });
+    return res.status(200).json({ success: true });
+  } catch (error: any) {
+    console.error("[KEYS ERROR] Failed to register anonymous key:", error.message || error);
+    return res.status(500).json({ error: "Failed to register anonymous key" });
+  }
+};
+
+v1Router.get("/public-keys", handleGetPublicKeys);
+v1Router.post("/keys/register", handleRegisterPublicKey);
 
 v1Router.post("/auth/request-otp", powValidator, requestOtp);
 v1Router.post("/auth/verify-otp", verifyOtp);
