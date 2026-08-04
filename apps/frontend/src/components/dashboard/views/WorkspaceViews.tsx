@@ -10,6 +10,9 @@ import {
 } from "@brone/crypto-core";
 import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
 import { getOrCreateStorageKey, loadAndDecryptState } from "../../../utils/storage";
+import { uploadToIPFS } from "../../../utils/ipfsService";
+import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
+import crypto from "crypto";
 
 // 1. Get mock CID from text
 const getMockCID = (text: string): string => {
@@ -617,39 +620,53 @@ export const ReportingHub: React.FC = () => {
       const nonce = window.crypto.randomUUID();
       const epoch = Date.now();
 
-      const contentCID = getMockCID(reportText);
-      const messageString = `${contentCID}${nonce}${epoch}`;
-      const encoder = new TextEncoder();
-      const signatureBuffer = await window.crypto.subtle.sign(
-        {
-          name: "ECDSA",
-          hash: { name: "SHA-256" },
-        },
-        privateKey,
-        encoder.encode(messageString)
-      );
-      const signatureHex = Array.from(new Uint8Array(signatureBuffer))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
+      // 1. Obtain IPFS CID using the leakproof IPFS pinning service
+      let contentCID: string | null = await uploadToIPFS(reportText);
 
+      // 2. Fetch decoy ring from the network
+      const decoyRing = await fetchDecoyRing(5);
+
+      // 3. Generate private key hex
+      let privKeyHex: string | null = await getPrivateKeyHex(privateKey);
+
+      // 4. Generate P-256 Linkable Ring Signature
+      const messageToSign = `${contentCID}|${blinded.toString()}`;
+      const ringSig = generateRingSignature(messageToSign, privKeyHex, decoyRing);
+
+      // 5. Encrypt payload
       const encryptedPayload = await encryptPayload(reportText);
 
+      // 6. Introduce network opacity jitter delay (500ms - 2500ms) to defeat packet analysis
+      const jitterDelay = Math.floor(Math.random() * 2000) + 500;
+      await new Promise((resolve) => setTimeout(resolve, jitterDelay));
+
+      // 7. Dispatch the post to the backend omitting credentials
       await apiClient.post("arbitration", {
         reputation_key: publicKeyHex,
         content: contentCID,
         blindedTransaction: blinded.toString(),
-        signature: signatureHex,
+        signature: ringSig.challenge,
         ispublic: false,
         status: "pending",
         nonce,
         epoch,
-        encrypted_payload: encryptedPayload
+        encrypted_payload: encryptedPayload,
+        ring_signature: ringSig
+      }, {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+        withCredentials: false
       });
 
-      // 7. Dispatch the verified reputation metric update out-of-band via keepalive
+      // Memory Sanitization: Explicitly discard private key and contentCID variables
+      privKeyHex = null;
+      contentCID = null;
+
+      // 8. Dispatch the verified reputation metric update out-of-band via keepalive
       await MetricSyncEngine.dispatchMetricUpdate(privateKey, publicKeyHex, "posts", 1);
 
-      // 8. Handle successful transaction lifecycle resolution
+      // 9. Handle successful transaction lifecycle resolution and clear component state
       if (isMountedRef.current) {
         setStatusMessage("SUCCESS: Blind stamp signature generated and broadcasted.");
         setReportText("");
@@ -793,35 +810,45 @@ export const JuryDuties: React.FC = () => {
       const epoch = Date.now();
       const blind_ballot_token = window.crypto.randomUUID();
       const vote_decision = actionType === "approve" ? "UPHOLD" : "DISMISS";
-      const ipfs_hash = targetItem.ipfs_hash;
+      let ipfs_hash: string | null = targetItem.ipfs_hash;
 
-      const messageString = `${ipfs_hash}${blind_ballot_token}${vote_decision}${epoch}`;
-      const encoder = new TextEncoder();
-      const signatureBuffer = await window.crypto.subtle.sign(
-        {
-          name: "ECDSA",
-          hash: { name: "SHA-256" },
-        },
-        privateKey,
-        encoder.encode(messageString)
-      );
-      const signatureHex = Array.from(new Uint8Array(signatureBuffer))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
+      // 1. Fetch decoy ring from the network
+      const decoyRing = await fetchDecoyRing(5);
 
-      // 3. Dispatch vote POST
+      // 2. Generate private key hex
+      let privKeyHex: string | null = await getPrivateKeyHex(privateKey);
+
+      // 3. Generate Nullifier Hash
+      const nullifier_hash = crypto.createHash("sha256").update(blind_ballot_token).digest("hex");
+
+      // 4. Generate Ring Signature over message
+      const messageToSign = `${ipfs_hash}|${nullifier_hash}|${vote_decision}`;
+      const ringSig = generateRingSignature(messageToSign, privKeyHex, decoyRing);
+
+      // 5. Network jitter (500ms - 2500ms) to defeat packet timing analysis
+      const jitterDelay = Math.floor(Math.random() * 2000) + 500;
+      await new Promise((resolve) => setTimeout(resolve, jitterDelay));
+
+      // 6. Dispatch vote POST omitting credentials
       await apiClient.post("arbitration/vote", {
         reputation_key: publicKeyHex,
         ipfs_hash,
         blind_ballot_token,
         vote_decision,
-        signature: signatureHex,
-        epoch
+        signature: ringSig.challenge,
+        epoch,
+        nullifier_hash,
+        ring_signature: ringSig
       }, {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
-        }
+        },
+        withCredentials: false
       });
+
+      // Memory Sanitization: Discard transient key and CID variables
+      privKeyHex = null;
+      ipfs_hash = null;
     } catch (err: any) {
       // 4. Rollback state and show overlay toast on network drop
       setItems(previousItems);

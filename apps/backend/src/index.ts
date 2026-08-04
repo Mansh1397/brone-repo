@@ -340,6 +340,18 @@ v1Router.post("/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/increment", handleMetricIncrement);
 
+const handleGetPublicKeys = async (req: any, res: any) => {
+  try {
+    const result = await pool.query("SELECT public_key FROM user_identities LIMIT 20");
+    const keys = result.rows.map((row: any) => row.public_key);
+    return res.status(200).json(keys);
+  } catch (error: any) {
+    console.error("[KEYS ERROR] Failed to fetch public keys:", error);
+    return res.status(200).json([]);
+  }
+};
+v1Router.get("/public-keys", requireAuth, handleGetPublicKeys);
+
 v1Router.post("/auth/request-otp", powValidator, requestOtp);
 v1Router.post("/auth/verify-otp", verifyOtp);
 
