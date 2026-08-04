@@ -21,7 +21,7 @@ function toPoint(hex: string) {
 // Map a public key point to a deterministic curve point
 function hashToPoint(point: any): any {
   const hash = crypto.createHash('sha256')
-    .update(point.encode('hex', true))
+    .update(point.encode('hex', false))
     .digest();
   return ec.g.mul(hash);
 }
@@ -30,8 +30,8 @@ function hashToPoint(point: any): any {
 function hashChallenge(message: string, L: any, R: any): string {
   return crypto.createHash('sha256')
     .update(message)
-    .update(L.encode('hex', true))
-    .update(R.encode('hex', true))
+    .update(L.encode('hex', false))
+    .update(R.encode('hex', false))
     .digest('hex');
 }
 
@@ -58,7 +58,7 @@ export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
   while (decoyRing.length < n) {
     try {
       const pair = ec.genKeyPair();
-      const pubHex = pair.getPublic().encode('hex', true);
+      const pubHex = pair.getPublic(false, 'hex');
       if (!decoyRing.includes(pubHex)) {
         decoyRing.push(pubHex);
       }
@@ -81,10 +81,14 @@ export function generateRingSignature(
   responses: string[];
   keyImage: string;
 } {
+  // Pre-Flight Type Checks
+  if (typeof myPrivateKeyHex !== 'string') throw new Error('Private key must be a hex string');
+  if (!publicKeysRingHex.every(k => typeof k === 'string')) throw new Error('All public keys must be hex strings');
+
   let tempPrivateKey = myPrivateKeyHex;
   try {
     const key = ec.keyFromPrivate(tempPrivateKey, 'hex');
-    const myPublicKeyHex = key.getPublic().encode('hex', true);
+    const myPublicKeyHex = key.getPublic(false, 'hex');
 
     let ringHex = [...publicKeysRingHex];
     if (!ringHex.includes(myPublicKeyHex)) {
@@ -108,7 +112,7 @@ export function generateRingSignature(
         while (!validPoint) {
           try {
             const pair = ec.genKeyPair();
-            validHex = pair.getPublic().encode('hex', true);
+            validHex = pair.getPublic(false, 'hex');
             validPoint = toPoint(validHex);
           } catch (e) {}
         }
@@ -122,9 +126,9 @@ export function generateRingSignature(
 
     const Hp = ringPoints.map(p => hashToPoint(p));
 
-    const privateKeyBN = key.getPriv();
+    const privateKeyBN = key.getPrivate();
     const keyImagePoint = Hp[signerIndex].mul(privateKeyBN);
-    const keyImageHex = keyImagePoint.encode('hex', true);
+    const keyImageHex = keyImagePoint.encode('hex', false);
 
     const s: string[] = Array(n).fill("");
     const c: string[] = Array(n).fill("");
@@ -141,14 +145,14 @@ export function generateRingSignature(
       const s_rand = ec.rand().mod(ec.n);
       s[idx] = s_rand.toString('hex');
 
-      const c_bn = ec.keyFromPrivate(c[idx], 'hex').getPriv();
+      const c_bn = ec.keyFromPrivate(c[idx], 'hex').getPrivate();
       const L_i = ec.g.mul(s_rand).add(ringPoints[idx].mul(c_bn));
       const R_i = Hp[idx].mul(s_rand).add(keyImagePoint.mul(c_bn));
 
       c[(idx + 1) % n] = hashChallenge(message, L_i, R_i);
     }
 
-    const c_s_bn = ec.keyFromPrivate(c[signerIndex], 'hex').getPriv();
+    const c_s_bn = ec.keyFromPrivate(c[signerIndex], 'hex').getPrivate();
     const cx = c_s_bn.mul(privateKeyBN).mod(ec.n);
     const s_s = k.sub(cx).umod(ec.n);
     s[signerIndex] = s_s.toString('hex');
