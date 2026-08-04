@@ -150,18 +150,32 @@ apiClient.interceptors.request.use(
       if (cc) {
         sanitizedHeaders['Cache-Control'] = cc as string;
       }
+      // Preserve custom headers starting with x-
+      for (const [key, value] of Object.entries(config.headers)) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey.startsWith('x-')) {
+          sanitizedHeaders[key] = value as string;
+        }
+      }
     }
 
-    // Attach Authorization header if token exists in storage or in initial config headers
+    // Attach Authorization header if token exists in storage
     const localToken = typeof localStorage !== 'undefined' ? (localStorage.getItem('brone_auth_token') || localStorage.getItem('accessToken')) : null;
-    if (localToken) {
-      sanitizedHeaders['Authorization'] = `Bearer ${localToken}`;
+    const sessionToken = typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('brone_auth_token') || sessionStorage.getItem('accessToken')) : null;
+    const token = localToken || sessionToken;
+
+    if (token) {
+      sanitizedHeaders['Authorization'] = `Bearer ${token}`;
     } else if (config.headers) {
       const auth = config.headers['Authorization'] || config.headers['authorization'];
       if (auth) {
         sanitizedHeaders['Authorization'] = auth as string;
       }
     }
+
+    // Set perimeter edge token explicitly
+    const edgeToken = (import.meta as any).env?.VITE_EDGE_TOKEN || '643762a3c2909a56726763ad75d4a1bbf7dd52685c1ec71dce176b8619a61425';
+    sanitizedHeaders['x-brone-edge-token'] = edgeToken;
 
     // Replace the headers object entirely to destroy non-essential browser tracking headers
     config.headers = sanitizedHeaders as any;

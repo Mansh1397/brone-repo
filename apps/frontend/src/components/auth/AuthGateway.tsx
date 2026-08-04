@@ -146,6 +146,8 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
         await encryptAndSaveState(sessionState);
         localStorage.setItem('accessToken', blindVoucherEnvelope);
         localStorage.setItem('brone_auth_token', blindVoucherEnvelope);
+        sessionStorage.setItem('accessToken', blindVoucherEnvelope);
+        sessionStorage.setItem('brone_auth_token', blindVoucherEnvelope);
         addLog("[System] Identity saved securely. Redirecting to dashboard...");
 
         setTimeout(() => {

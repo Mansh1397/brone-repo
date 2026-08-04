@@ -158,7 +158,7 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         // Generate a stateless, anonymous JWT token containing a completely random identifier
         const header = { alg: "HS256", typ: "JWT" };
         const payload = { jti: crypto.randomUUID(), sub: "anonymous_actor" };
-        const secret = process.env.JWT_SECRET || "default_local_jwt_secret";
+        const secret = process.env.JWT_SECRET || "beta_development_secret";
         const base64UrlEncode = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
         
         const encodedHeader = base64UrlEncode(header);
