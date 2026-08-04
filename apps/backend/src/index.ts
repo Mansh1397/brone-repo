@@ -2,6 +2,10 @@ import express from "express";
 import * as crypto from "crypto";
 import helmet from "helmet";
 import cors from "cors";
+// @ts-ignore
+import pkg from 'elliptic';
+// @ts-ignore
+import BN from 'bn.js';
 import { guardAgainstDoubleSpend } from "./middleware/doubleSpendRegistry";
 import { verifyRingHandler } from "./controllers/ringValidator";
 import { handleBlindStamp, getPublicKeyConfig } from "./controllers/stampController";
@@ -12,6 +16,61 @@ import { powValidator, requestOtp, verifyOtp } from "./controllers/identityProvi
 import { initDB } from "./utils/dbInit";
 
 const app = express();
+
+const { ec: EC } = pkg;
+const ec = new EC('p256');
+
+function toPoint(hex: string) {
+  return ec.keyFromPublic(hex, 'hex').getPublic();
+}
+
+function hashToPoint(point: any): any {
+  const hash = crypto.createHash('sha256')
+    .update(point.encode('hex', false))
+    .digest();
+  return ec.g.mul(hash);
+}
+
+function hashChallenge(message: string, L: any, R: any): string {
+  return crypto.createHash('sha256')
+    .update(message)
+    .update(L.encode('hex', false))
+    .update(R.encode('hex', false))
+    .digest('hex');
+}
+
+export function verifyRingSignature(
+  message: string,
+  ring: string[],
+  challenge: string,
+  responses: string[],
+  keyImage: string
+): boolean {
+  try {
+    const n = ring.length;
+    const ringPoints = ring.map(hex => toPoint(hex));
+    const Hp = ringPoints.map(p => hashToPoint(p));
+    const keyImagePoint = toPoint(keyImage);
+
+    const c = Array(n).fill("");
+    c[0] = challenge;
+
+    for (let i = 0; i < n; i++) {
+      const s_bn = new BN(responses[i], 16);
+      const c_bn = new BN(c[i], 16);
+
+      const L_i = ec.g.mul(s_bn).add(ringPoints[i].mul(c_bn));
+      const R_i = Hp[i].mul(s_bn).add(keyImagePoint.mul(c_bn));
+
+      c[(i + 1) % n] = hashChallenge(message, L_i, R_i);
+    }
+
+    return c[0] === challenge;
+  } catch (err: any) {
+    console.error("[RING VERIFIER ERROR] Ring verification failed:", err.message || err);
+    return false;
+  }
+}
 
 app.set("trust proxy", true);
 
@@ -366,111 +425,87 @@ const handleGetArbitration = async (req: any, res: any) => {
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
-    const { reputation_key, content, blindedTransaction, signature, nonce, epoch, encrypted_payload } = req.body;
+    const { ipfs_hash, geohash, ring_signature } = req.body;
 
-    console.log("[AGENT MANAGER]: Initiating codebase-aware parallel validation loops...");
-
-    // Task 1: Production-Ready Cryptographic Verification Shell
-    const validateTask = () => {
-      // 1. Ingestion presence checks
-      if (!reputation_key || !content || !blindedTransaction || !signature || !nonce || !epoch) {
-        throw {
-          status: 400,
-          error: "Security Denial: Cryptographic verification failed structural integrity checks"
-        };
-      }
-
-      // 2. Synchronous clock-skew validation gate
-      if (Math.abs(Date.now() - Number(epoch)) > 60000) {
-        throw {
-          status: 400,
-          error: "Security Deviation: Epoch timestamp out of synchronization bounds."
-        };
-      }
-
-      // 3. Cryptographic structural checks: Regex + range checks
-      const isHex = (str: any) => typeof str === "string" && /^[0-9a-fA-F]+$/.test(str);
-      const isIpfsCid = (str: any) => {
-        if (typeof str !== "string") return false;
-        // CIDv0: Base58 string of length 46 starting with Qm
-        const cidv0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
-        // CIDv1: Base32 string of length 59 starting with bafy
-        const cidv1 = /^bafy[a-z2-7]{55}$/;
-        return cidv0.test(str) || cidv1.test(str);
-      };
-
-      // EC P-256 public key lengths: SEC1 compressed (66 chars), SEC1 uncompressed (130 chars), SPKI DER (182 chars)
-      const isRepKeyOk = isHex(reputation_key) && (reputation_key.length === 66 || reputation_key.length === 130 || reputation_key.length === 182);
-      // EC P-256 signature lengths: ieee-p1363 (128 chars) or DER (140-144 chars)
-      const isSigOk = isHex(signature) && (signature.length === 128 || (signature.length >= 140 && signature.length <= 144));
-      const isContentOk = isIpfsCid(content);
-
-      if (!isRepKeyOk || !isSigOk || !isContentOk) {
-        throw {
-          status: 400,
-          error: "Security Denial: Cryptographic verification failed structural integrity checks"
-        };
-      }
-
-      // 4. Mathematical signature verification using native crypto KeyObject import
-      const messageString = `${content}${nonce}${epoch}`;
-      let isSigValid = false;
-      try {
-        const keyObject = crypto.createPublicKey({
-          key: Buffer.from(reputation_key, "hex"),
-          format: "der",
-          type: "spki"
-        });
-        isSigValid = crypto.verify(
-          "SHA256",
-          Buffer.from(messageString),
-          {
-            key: keyObject,
-            dsaEncoding: "ieee-p1363"
-          },
-          Buffer.from(signature, "hex")
-        );
-      } catch (err) {
-        isSigValid = false;
-      }
-
-      if (!isSigValid) {
-        throw {
-          status: 400,
-          error: "Security Denial: Cryptographic signature mismatch"
-        };
-      }
-    };
-
-    // First: Await Task 1 in-memory verification
-    validateTask();
-
-    // Store encrypted payload in-memory if provided
-    if (encrypted_payload && typeof encrypted_payload === "string") {
-      mockEncryptedData[content] = encrypted_payload;
+    // 1. Ingestion presence checks
+    if (!ipfs_hash || !geohash || !ring_signature || 
+        typeof ring_signature !== 'object' ||
+        !ring_signature.message ||
+        !Array.isArray(ring_signature.ring) ||
+        !ring_signature.challenge ||
+        !Array.isArray(ring_signature.responses) ||
+        !ring_signature.keyImage) {
+      console.log('[ARBITRATION INGRESS PAYLOAD FAILURE]:', JSON.stringify(req.body, null, 2));
+      return res.status(400).json({
+        error: "Invalid Payload",
+        details: "Missing field: ipfs_hash, geohash or ring_signature structure mismatch"
+      });
     }
 
-    // Double-Spend Protection: check if signature already exists in signatures table
-    const replayCheck = await pool.query("SELECT tx_hash FROM signatures WHERE tx_hash = $1", [signature]);
+    // 2. Validate IPFS hash length and geohash length
+    const isIpfsCid = (str: any) => {
+      if (typeof str !== "string") return false;
+      const cidv0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
+      const cidv1 = /^bafy[a-z2-7]{55}$/;
+      return cidv0.test(str) || cidv1.test(str);
+    };
+
+    if (!isIpfsCid(ipfs_hash) || typeof geohash !== 'string' || geohash.length === 0) {
+      console.log('[ARBITRATION INGRESS PAYLOAD FAILURE]:', JSON.stringify(req.body, null, 2));
+      return res.status(400).json({
+        error: "Invalid Payload",
+        details: "ipfs_hash or geohash structural properties are invalid"
+      });
+    }
+
+    // 3. Double-Spend Protection: check if signature already exists in signatures table
+    const signatureChallenge = ring_signature.challenge;
+    const replayCheck = await pool.query("SELECT tx_hash FROM signatures WHERE tx_hash = $1", [signatureChallenge]);
     if (replayCheck.rows.length > 0) {
+      console.log('[ARBITRATION REPLAY COLLISION]:', signatureChallenge);
       return res.status(409).json({ error: "Security Collision: Signature replay state detected." });
     }
 
-    // Insert signature to prevent replay
+    // 4. Mathematical signature verification
+    if (ring_signature.message !== `${ipfs_hash}|${geohash}`) {
+      console.log('[RING VERIFIER FAILURE]: Message structure mismatch:', ring_signature.message, 'expected:', `${ipfs_hash}|${geohash}`);
+      return res.status(400).json({
+        error: "Invalid Payload",
+        details: "Ring Signature message structure mismatch"
+      });
+    }
+
+    const isSigValid = verifyRingSignature(
+      ring_signature.message,
+      ring_signature.ring,
+      ring_signature.challenge,
+      ring_signature.responses,
+      ring_signature.keyImage
+    );
+
+    if (!isSigValid) {
+      console.log('[RING VERIFIER FAILURE]: Challenge mismatch or signature invalid for message:', ring_signature.message);
+      return res.status(400).json({
+        error: "Invalid Payload",
+        details: "Ring Signature verification failed (challenge mismatch or invalid points)"
+      });
+    }
+
+    // 5. Insert signature to prevent replay
     await pool.query({
       text: "INSERT INTO signatures (tx_hash) VALUES ($1) ON CONFLICT DO NOTHING;",
-      values: [signature]
+      values: [signatureChallenge]
     });
 
-    // Second: Await Task 2 database insertion (only runs if Task 1 succeeds)
-    const geohashValue = String(blindedTransaction).substring(0, 20);
+    // 6. Insert post into decentralized_posts
+    const safeGeohash = geohash.substring(0, 20);
     await pool.query({
       text: `
         INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at)
         VALUES ($1, $2, $3, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
         ON CONFLICT (ipfs_hash) DO NOTHING;
       `,
-      values: [content, geohashValue, signature]
+      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature)]
     });
 
     return res.status(201).json({
@@ -479,9 +514,7 @@ const handlePostArbitration = async (req: any, res: any) => {
     });
 
   } catch (error: any) {
-    if (error && typeof error === "object" && error.status) {
-      return res.status(error.status).json({ error: error.error });
-    }
+    console.error("[ARBITRATION ERROR] Ingress processing exception:", error.message || error);
     return res.status(500).json({ error: "Internal processing error" });
   }
 };

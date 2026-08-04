@@ -623,6 +623,9 @@ export const ReportingHub: React.FC = () => {
       // 1. Obtain IPFS CID using the leakproof IPFS pinning service
       let contentCID: string | null = await uploadToIPFS(reportText);
 
+      // Derive a 8-character geohash representation from blindedTransaction string
+      const geohashVal = blinded.toString().substring(0, 8);
+
       // 2. Fetch decoy ring from the network
       const decoyRing = await fetchDecoyRing(5);
 
@@ -630,10 +633,10 @@ export const ReportingHub: React.FC = () => {
       let privKeyHex: string | null = await getPrivateKeyHex(privateKey);
 
       // 4. Generate P-256 Linkable Ring Signature
-      const messageToSign = `${contentCID}|${blinded.toString()}`;
+      const messageToSign = `${contentCID}|${geohashVal}`;
       const ringSig = generateRingSignature(messageToSign, privKeyHex, decoyRing);
 
-      // 5. Encrypt payload
+      // 5. Encrypt payload (optional, keeping variable local if needed for custom storage logs)
       const encryptedPayload = await encryptPayload(reportText);
 
       // 6. Introduce network opacity jitter delay (500ms - 2500ms) to defeat packet analysis
@@ -642,15 +645,8 @@ export const ReportingHub: React.FC = () => {
 
       // 7. Dispatch the post to the backend omitting credentials
       await apiClient.post("arbitration", {
-        reputation_key: publicKeyHex,
-        content: contentCID,
-        blindedTransaction: blinded.toString(),
-        signature: ringSig.challenge,
-        ispublic: false,
-        status: "pending",
-        nonce,
-        epoch,
-        encrypted_payload: encryptedPayload,
+        ipfs_hash: contentCID,
+        geohash: geohashVal,
         ring_signature: ringSig
       }, {
         headers: {
