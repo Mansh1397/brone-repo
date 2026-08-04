@@ -1,5 +1,6 @@
 import pkg from 'elliptic';
 import crypto from 'crypto';
+import BN from 'bn.js';
 import { apiClient } from '../api/apiClient';
 
 import { base64urlToBase64 } from './base64url';
@@ -11,6 +12,19 @@ export async function getPrivateKeyHex(privateKey: CryptoKey): Promise<string> {
   const jwk = await window.crypto.subtle.exportKey("jwk", privateKey);
   if (!jwk.d) throw new Error("Private key is not exportable.");
   return Buffer.from(base64urlToBase64(jwk.d), 'base64').toString('hex');
+}
+
+// Browser-safe Cryptographically Secure RNG Helpers
+function getSecureRandomBytes(): Uint8Array {
+  const array = new Uint8Array(32);
+  window.crypto.getRandomValues(array);
+  return array;
+}
+
+function getSecureRandomHex(): string {
+  return Array.from(getSecureRandomBytes())
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 // Convert string/hex to point
@@ -57,10 +71,11 @@ export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
   // Generate missing mathematically valid decoy keys using the EC library to fill the ring
   while (decoyRing.length < n) {
     try {
-      const pair = ec.genKeyPair();
-      const pubHex = pair.getPublic(false, 'hex');
-      if (!decoyRing.includes(pubHex)) {
-        decoyRing.push(pubHex);
+      const dummyPrivHex = getSecureRandomHex();
+      const dummyKeyObj = ec.keyFromPrivate(dummyPrivHex, 'hex');
+      const dummyPubHex = dummyKeyObj.getPublic(false, 'hex');
+      if (!decoyRing.includes(dummyPubHex)) {
+        decoyRing.push(dummyPubHex);
       }
     } catch (e) {
       // Keep trying
@@ -111,8 +126,9 @@ export function generateRingSignature(
         let validHex = "";
         while (!validPoint) {
           try {
-            const pair = ec.genKeyPair();
-            validHex = pair.getPublic(false, 'hex');
+            const dummyPrivHex = getSecureRandomHex();
+            const dummyKeyObj = ec.keyFromPrivate(dummyPrivHex, 'hex');
+            validHex = dummyKeyObj.getPublic(false, 'hex');
             validPoint = toPoint(validHex);
           } catch (e) {}
         }
@@ -133,7 +149,8 @@ export function generateRingSignature(
     const s: string[] = Array(n).fill("");
     const c: string[] = Array(n).fill("");
 
-    const k = ec.rand().mod(ec.n);
+    // Secure browser-compatible random scalar k
+    const k = new BN(getSecureRandomHex(), 16).mod(ec.n);
 
     const L_s = ec.g.mul(k);
     const R_s = Hp[signerIndex].mul(k);
@@ -142,7 +159,7 @@ export function generateRingSignature(
 
     for (let i = 1; i < n; i++) {
       const idx = (signerIndex + i) % n;
-      const s_rand = ec.rand().mod(ec.n);
+      const s_rand = new BN(getSecureRandomHex(), 16).mod(ec.n);
       s[idx] = s_rand.toString('hex');
 
       const c_bn = ec.keyFromPrivate(c[idx], 'hex').getPrivate();
