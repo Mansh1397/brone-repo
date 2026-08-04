@@ -14,6 +14,37 @@ const app = express();
 
 app.set("trust proxy", true);
 
+(async () => {
+  try {
+    // 1. Alter decentralized_posts to support geohash and ring_signature
+    await pool.query(`
+      ALTER TABLE decentralized_posts 
+      ADD COLUMN IF NOT EXISTS geohash VARCHAR(32),
+      ADD COLUMN IF NOT EXISTS ring_signature TEXT;
+    `);
+
+    // 2. Create nullifiers table for double-voting protection
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS nullifiers (
+        nullifier_hash VARCHAR(64) PRIMARY KEY,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+
+    // 3. Create anonymous_votes table for anonymous vote tracking and SPRT evaluation
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS anonymous_votes (
+        id SERIAL PRIMARY KEY,
+        ipfs_hash VARCHAR(90) NOT NULL,
+        vote_decision VARCHAR(10) NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+      );
+    `);
+  } catch (err: any) {
+    console.error("[DB INIT ERROR] Failed to run database schema upgrades:", err.message || err);
+  }
+})();
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
@@ -275,65 +306,27 @@ export const requireAuth = (req: any, res: any, next: any) => {
 const handleGetFeed = async (req: any, res: any) => {
   try {
     const result = await pool.query(`
-      SELECT ipfs_hash, macro_region_cell_id FROM decentralized_posts 
+      SELECT ipfs_hash, macro_region_cell_id AS geohash, created_at AS submittedat, 'APPROVED' AS status 
+      FROM decentralized_posts 
       ORDER BY created_at DESC LIMIT 30
     `);
-
-    if (result.rows.length === 0) {
-      return res.status(200).json([
-        {
-          id: "post_01",
-          author: "Node_Arbitrator_42",
-          avatar: "NA",
-          consensus: "APPROVED",
-          validations: 5,
-          ipfs_hash: "QmPotholeReported",
-          description: ""
-        },
-        {
-          id: "post_02",
-          author: "Sentry_Alpha",
-          avatar: "SA",
-          consensus: "APPROVED",
-          validations: 3,
-          ipfs_hash: "QmStreetLampLeaking",
-          description: ""
-        }
-      ]);
-    }
 
     const posts = result.rows.map((row: any, index: number) => ({
       id: `post_db_${index}`,
       author: "Validator_" + row.ipfs_hash.substring(2, 8),
       avatar: "VL",
-      consensus: "APPROVED",
+      consensus: row.status,
       validations: 1,
       ipfs_hash: row.ipfs_hash,
+      geohash: row.geohash,
+      submittedat: row.submittedat,
       description: ""
     }));
 
     return res.status(200).json(posts);
-  } catch (error) {
-    return res.status(200).json([
-      {
-        id: "post_01",
-        author: "Node_Arbitrator_42",
-        avatar: "NA",
-        consensus: "APPROVED",
-        validations: 5,
-        ipfs_hash: "QmPotholeReported",
-        description: ""
-      },
-      {
-        id: "post_02",
-        author: "Sentry_Alpha",
-        avatar: "SA",
-        consensus: "APPROVED",
-        validations: 3,
-        ipfs_hash: "QmStreetLampLeaking",
-        description: ""
-      }
-    ]);
+  } catch (error: any) {
+    console.error("[FEED ERROR] Failed to fetch feed:", error.message || error);
+    return res.status(200).json([]);
   }
 };
 
@@ -350,10 +343,7 @@ v1Router.post("/reporting/increment", handleMetricIncrement);
 v1Router.post("/auth/request-otp", powValidator, requestOtp);
 v1Router.post("/auth/verify-otp", verifyOtp);
 
-const mockEncryptedData: Record<string, string> = {
-  "QmPotholeReported": "ENC_GCM:c3BsaXRfYnl0ZXNfZGF0YQ==",
-  "QmStreetLampLeaking": "ENC_GCM:ZmF1bHR5X3N0cmVldF9sYW1wX2xlYWtpbmc="
-};
+const mockEncryptedData: Record<string, string> = {};
 
 const handleGetArbitration = async (req: any, res: any) => {
   try {
@@ -361,33 +351,15 @@ const handleGetArbitration = async (req: any, res: any) => {
       SELECT ipfs_hash, macro_region_cell_id FROM decentralized_posts 
       ORDER BY created_at DESC LIMIT 30
     `);
-
-    if (result.rows.length === 0) {
-      return res.status(200).json([
-        { ipfs_hash: "QmPotholeReported", macro_region_cell_id: "cell_1" },
-        { ipfs_hash: "QmStreetLampLeaking", macro_region_cell_id: "cell_2" }
-      ]);
-    }
-
     return res.status(200).json(result.rows);
   } catch (error) {
-    return res.status(200).json([
-      { ipfs_hash: "QmPotholeReported", macro_region_cell_id: "cell_1" },
-      { ipfs_hash: "QmStreetLampLeaking", macro_region_cell_id: "cell_2" }
-    ]);
+    console.error("[ARBITRATION ERROR] Failed to fetch arbitration posts:", error);
+    return res.status(200).json([]);
   }
 };
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
-    if (process.env.BYPASS_SECURITY_CHECKS === 'true') {
-      console.warn('[BETA MODE] Bypassing DB for arbitration.');
-      const { content, encrypted_payload } = req.body;
-      if (content && encrypted_payload && typeof encrypted_payload === "string") {
-        mockEncryptedData[content] = encrypted_payload;
-      }
-      return res.status(200).json({ success: true, message: "Arbitration request successfully logged in beta mode." });
-    }
     const { reputation_key, content, blindedTransaction, signature, nonce, epoch, encrypted_payload } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating codebase-aware parallel validation loops...");
@@ -472,16 +444,29 @@ const handlePostArbitration = async (req: any, res: any) => {
       mockEncryptedData[content] = encrypted_payload;
     }
 
+    // Double-Spend Protection: check if signature already exists in signatures table
+    const replayCheck = await pool.query("SELECT signature FROM signatures WHERE signature = $1", [signature]);
+    if (replayCheck.rows.length > 0) {
+      return res.status(409).json({ error: "Security Collision: Signature replay state detected." });
+    }
+
+    // Insert signature to prevent replay
+    const safeSignature = signature.substring(0, 130);
+    const safeReputationKey = reputation_key.substring(0, 130);
+    await pool.query({
+      text: "INSERT INTO signatures (signature, reputation_key, metric_type, metric_value, created_at) VALUES ($1, $2, $3, $4, NOW())",
+      values: [safeSignature, safeReputationKey, 'post_submission', 1]
+    });
+
     // Second: Await Task 2 database insertion (only runs if Task 1 succeeds)
-    // Zero-Loophole: reputation_key is isolated to Task 1's memory space. It is NEVER persisted or logged.
-    const safeCellId = String(blindedTransaction).substring(0, 32);
+    const geohashValue = String(blindedTransaction).substring(0, 32);
     await pool.query({
       text: `
-        INSERT INTO decentralized_posts (ipfs_hash, macro_region_cell_id, created_at)
-        VALUES ($1, $2, NOW())
+        INSERT INTO decentralized_posts (ipfs_hash, macro_region_cell_id, geohash, ring_signature, created_at)
+        VALUES ($1, $2, $3, $4, NOW())
         ON CONFLICT (ipfs_hash) DO NOTHING;
       `,
-      values: [content, safeCellId]
+      values: [content, geohashValue, geohashValue, signature]
     });
 
     return res.status(201).json({
@@ -493,22 +478,13 @@ const handlePostArbitration = async (req: any, res: any) => {
     if (error && typeof error === "object" && error.status) {
       return res.status(error.status).json({ error: error.error });
     }
-    // Generic processing/database error (never log reputation_key or req.body to console)
     return res.status(500).json({ error: "Internal processing error" });
   }
 };
 
 const handleVoteArbitration = async (req: any, res: any) => {
   try {
-    if (process.env.BYPASS_SECURITY_CHECKS === 'true') {
-      console.warn('[BETA MODE] Bypassing DB for arbitration vote.');
-      return res.status(200).json({
-        success: true,
-        status: "success",
-        message: "Vote successfully registered."
-      });
-    }
-    const { reputation_key, ipfs_hash, blind_ballot_token, vote_decision, signature, epoch } = req.body;
+    const { reputation_key, ipfs_hash, blind_ballot_token, vote_decision, signature, epoch, nullifier_hash } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating twin-engine arbitration extension...");
 
@@ -566,36 +542,68 @@ const handleVoteArbitration = async (req: any, res: any) => {
       return res.status(400).json({ error: "Security Denial: Cryptographic signature mismatch" });
     }
 
-    // 4. Anonymous database metrics update (zero-loophole, decoupled from juror reputation_key or blind_ballot_token)
+    // 4. Double-vote Protection: check uniqueness of nullifier_hash in nullifiers table
+    const finalNullifier = nullifier_hash || crypto.createHash("sha256").update(blind_ballot_token).digest("hex");
+    const nullifierCheck = await pool.query("SELECT nullifier_hash FROM nullifiers WHERE nullifier_hash = $1", [finalNullifier]);
+    if (nullifierCheck.rows.length > 0) {
+      return res.status(409).json({ error: "Security Collision: Nullifier already spent / duplicate vote detected." });
+    }
+
+    // Save the nullifier to prevent double-voting
+    await pool.query({
+      text: "INSERT INTO nullifiers (nullifier_hash) VALUES ($1)",
+      values: [finalNullifier]
+    });
+
+    // 5. Record the vote choice anonymously
+    await pool.query({
+      text: "INSERT INTO anonymous_votes (ipfs_hash, vote_decision) VALUES ($1, $2)",
+      values: [ipfs_hash, vote_decision]
+    });
+
+    // 6. Execute SPRT threshold evaluation
+    const votesResult = await pool.query("SELECT vote_decision FROM anonymous_votes WHERE ipfs_hash = $1", [ipfs_hash]);
+    const votes = votesResult.rows;
+    let logLikelihood = 0.0;
+    for (const v of votes) {
+      if (v.vote_decision === "UPHOLD") {
+        logLikelihood += 1.0;
+      } else {
+        logLikelihood -= 1.0;
+      }
+    }
+
+    let verdict = "UNDECIDED";
+    if (logLikelihood >= 4.0) {
+      verdict = "APPROVED";
+    } else if (logLikelihood <= -4.0) {
+      verdict = "REJECTED";
+    }
+
+    console.log(`[SPRT EVALUATION] IPFS Hash: ${ipfs_hash}, Log-Likelihood: ${logLikelihood}, Verdict: ${verdict}`);
+
+    // 7. Update metrics inside reputation_ledger for global analytics
     const metricName = `arbitration_${vote_decision.toLowerCase()}`;
-    const updateResult = await pool.query({
+    await pool.query({
       text: `
-        UPDATE reputation_ledger
-        SET value = value + 1, updated_at = NOW()
-        WHERE reputation_key = 'global_ledger' AND metric_name = $1;
+        INSERT INTO reputation_ledger (reputation_key, metric_name, value, updated_at)
+        VALUES ('global_ledger', $1, 1, NOW())
+        ON CONFLICT (reputation_key, metric_name)
+        DO UPDATE SET value = reputation_ledger.value + 1, updated_at = NOW();
       `,
       values: [metricName]
     });
 
-    if (updateResult.rowCount === 0) {
-      await pool.query({
-        text: `
-          INSERT INTO reputation_ledger (reputation_key, metric_name, value, updated_at)
-          VALUES ('global_ledger', $1, 1, NOW())
-          ON CONFLICT (reputation_key, metric_name)
-          DO UPDATE SET value = reputation_ledger.value + 1, updated_at = NOW();
-        `,
-        values: [metricName]
-      });
-    }
-
     return res.status(200).json({
       success: true,
       status: "success",
-      message: "Vote successfully registered."
+      message: "Vote successfully registered.",
+      verdict,
+      logLikelihood
     });
 
   } catch (error) {
+    console.error("[VOTE ERROR] Failed to record vote:", error);
     return res.status(500).json({ error: "Internal processing error" });
   }
 };

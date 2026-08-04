@@ -51,11 +51,58 @@ export const powValidator = (req: Request, res: Response, next: NextFunction) =>
 };
 
 export const requestOtp = async (req: Request, res: Response): Promise<void> => {
-    res.status(200).json({
-        success: true,
-        message: "[BETA MODE]: Hardcoded OTP bypass active. Use code 123456."
-    });
-    return;
+    let { phoneNumber, powNonce } = req.body;
+    try {
+        const shouldBypass = process.env.BYPASS_SECURITY_CHECKS === "true" || process.env.BYPASS_POW === "true";
+        if (!shouldBypass) {
+            try {
+                if (!verifyProofOfWork(powNonce, phoneNumber)) {
+                    res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+                    return;
+                }
+            } catch (powError: any) {
+                console.error("[PoW MIDDLEWARE EXCEPTION]:", powError.message || powError);
+                res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+                return;
+            }
+        }
+
+        const otpToken = crypto.randomInt(100000, 999999).toString();
+
+        // 1. Store code in transient in-memory cache (5 minutes expiration)
+        sandboxOtpCache.set(phoneNumber, {
+            code: otpToken,
+            expiresAt: Date.now() + 300000
+        });
+
+        // 2. Store in Redis with strict 300s TTL (SET EX)
+        try {
+            await redis.set(`otp:${phoneNumber}`, otpToken, 'EX', 300);
+        } catch (redisErr) {
+            console.error("[REDIS ERROR] Failed to save OTP in Redis:", redisErr);
+        }
+
+        // Print code directly to terminal stdout with highly visible banner
+        console.log("================================================================");
+        console.log(`🔑 [SANDBOX AUTH]: Active Verification Code for multi-device login is: ${otpToken}`);
+        console.log("================================================================");
+
+        // Inject console log for manual testing
+        console.log(`[BETA MODE] OTP for ${phoneNumber} is: ${otpToken}`);
+
+        const responsePayload: any = {
+            success: true,
+            message: "OTP generated successfully"
+        };
+        res.status(200).json(responsePayload);
+        return;
+    } catch (error: any) {
+        console.error("[OTP EXCEPTION]:", error.message || error);
+        res.status(500).json({ error: error.message || 'Systemic routing anomaly.' });
+    } finally {
+        phoneNumber = null;
+        powNonce = null;
+    }
 };
 
 export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
@@ -67,33 +114,10 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
     };
 
     try {
-        const otp = req.body.otp || req.body.otpCode;
-        if (otp === '123456' || otp === 123456) {
-            const header = { alg: "HS256", typ: "JWT" };
-            const payload = { jti: crypto.randomUUID(), sub: "anonymous_actor" };
-            const secret = process.env.JWT_SECRET || "beta_development_secret";
-            const base64UrlEncode = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
-            
-            const encodedHeader = base64UrlEncode(header);
-            const encodedPayload = base64UrlEncode(payload);
-            
-            const signature = crypto.createHmac("sha256", secret)
-                .update(`${encodedHeader}.${encodedPayload}`)
-                .digest("base64url");
-                
-            const anonymousJwtToken = `${encodedHeader}.${encodedPayload}.${signature}`;
-
-            res.status(200).json({
-                success: true,
-                token: anonymousJwtToken,
-                blindVoucherEnvelope: anonymousJwtToken
-            });
-            return;
-        }
-
-        if (!clientPublicKey) {
+        const submittedOtp = req.body.otp || req.body.otpCode;
+        if (!submittedOtp) {
             await enforceTimingPadding();
-            res.status(400).json({ error: 'Missing client public key.' });
+            res.status(400).json({ error: 'Missing OTP code.' });
             return;
         }
 
@@ -102,27 +126,33 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
         const now = Date.now();
         let isValid = false;
 
-        if (entry && entry.expiresAt >= now && entry.code === otpCode) {
+        if (entry && entry.expiresAt >= now && entry.code === String(submittedOtp)) {
             isValid = true;
             sandboxOtpCache.delete(phoneNumber);
         }
 
-        // 2. Also try checking Redis for test/production compatibility
+        // 2. Check Redis for verification
         let cachedToken = null;
         try {
             cachedToken = await redis.get(`otp:${phoneNumber}`);
-            if (cachedToken && cachedToken === otpCode) {
+            if (cachedToken && cachedToken === String(submittedOtp)) {
                 isValid = true;
-                await redis.del(`otp:${phoneNumber}`);
             }
         } catch (redisErr) {
-            // Quietly ignore Redis errors in sandbox mode
+            console.error("[REDIS ERROR] Failed to check OTP in Redis:", redisErr);
         }
 
         if (!isValid) {
             await enforceTimingPadding();
             res.status(401).json({ error: 'Invalid or expired credentials.' });
             return;
+        }
+
+        // 3. WIPE OTP IMMEDIATELY ON MATCH BEFORE RETURNING RESPONSE
+        try {
+            await redis.del(`otp:${phoneNumber}`);
+        } catch (redisErr) {
+            console.error("[REDIS ERROR] Failed to delete OTP in Redis:", redisErr);
         }
 
         // Generate a stateless, anonymous JWT token containing a completely random identifier
