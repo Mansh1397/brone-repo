@@ -13,7 +13,8 @@
     "test": "npx jest packages/crypto-core",
     "build": "npm run build --workspace=@brone/types && npm run build --workspace=@brone/crypto-core && npm run build --workspace=@brone/backend",
     "frontend:dev": "npm run dev --workspace=apps/frontend",
-    "frontend:build": "npm run build --workspace=apps/frontend"
+    "frontend:build": "npm run build --workspace=apps/frontend",
+    "db:migrate": "node scripts/init_db.js"
   },
   "devDependencies": {
     "@testing-library/react": "^14.3.1",
