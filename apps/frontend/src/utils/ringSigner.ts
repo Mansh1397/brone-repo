@@ -2,13 +2,15 @@ import pkg from 'elliptic';
 import crypto from 'crypto';
 import { apiClient } from '../api/apiClient';
 
+import { base64urlToBase64 } from './base64url';
+
 const { ec: EC } = pkg;
 const ec = new EC('p256');
 
 export async function getPrivateKeyHex(privateKey: CryptoKey): Promise<string> {
   const jwk = await window.crypto.subtle.exportKey("jwk", privateKey);
   if (!jwk.d) throw new Error("Private key is not exportable.");
-  return Buffer.from(jwk.d, 'base64url').toString('hex');
+  return Buffer.from(base64urlToBase64(jwk.d), 'base64').toString('hex');
 }
 
 // Convert string/hex to point
