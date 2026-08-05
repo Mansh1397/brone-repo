@@ -9,7 +9,7 @@ import {
   RSAPublicKey
 } from "@brone/crypto-core";
 import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
-import { getOrCreateStorageKey, loadAndDecryptState } from "../../../utils/storage";
+import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState } from "../../../utils/storage";
 import { uploadToIPFS } from "../../../utils/ipfsService";
 import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
 import crypto from "crypto";
