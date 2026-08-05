@@ -330,6 +330,20 @@ const getOrCreateKeyPair = async (): Promise<{
   const cached = (window as any).__brone_keypair;
   if (cached && cached.dsaPrivateKey && cached.kemPrivateKey) return cached;
 
+  const stored = await loadAndDecryptState();
+  if (stored && stored.pqDsaPrivateKeyHex && stored.pqKemPrivateKeyHex && stored.pqPublicKeyHex) {
+    const dsaPrivateKey = new Uint8Array(Buffer.from(stored.pqDsaPrivateKeyHex, 'hex'));
+    const kemPrivateKey = new Uint8Array(Buffer.from(stored.pqKemPrivateKeyHex, 'hex'));
+    const keypairObj = {
+      privateKey: dsaPrivateKey,
+      dsaPrivateKey,
+      kemPrivateKey,
+      publicKeyHex: stored.pqPublicKeyHex
+    };
+    (window as any).__brone_keypair = keypairObj;
+    return keypairObj;
+  }
+
   const dsaKeys = ml_dsa87.keygen();
   const kemKeys = ml_kem1024.keygen();
 
@@ -343,6 +357,20 @@ const getOrCreateKeyPair = async (): Promise<{
     kemPrivateKey: kemKeys.secretKey,
     publicKeyHex
   };
+
+  if (stored) {
+    stored.pqDsaPrivateKeyHex = Buffer.from(dsaKeys.secretKey).toString('hex');
+    stored.pqKemPrivateKeyHex = Buffer.from(kemKeys.secretKey).toString('hex');
+    stored.pqPublicKeyHex = publicKeyHex;
+    await encryptAndSaveState(stored);
+  } else {
+    await encryptAndSaveState({
+      pqDsaPrivateKeyHex: Buffer.from(dsaKeys.secretKey).toString('hex'),
+      pqKemPrivateKeyHex: Buffer.from(kemKeys.secretKey).toString('hex'),
+      pqPublicKeyHex: publicKeyHex
+    });
+  }
+
   (window as any).__brone_keypair = result;
   return result;
 };
