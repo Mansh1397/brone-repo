@@ -334,14 +334,16 @@ const getOrCreateKeyPair = async (): Promise<{
   if (stored && stored.pqDsaPrivateKeyHex && stored.pqKemPrivateKeyHex && stored.pqPublicKeyHex) {
     const dsaPrivateKey = new Uint8Array(Buffer.from(stored.pqDsaPrivateKeyHex, 'hex'));
     const kemPrivateKey = new Uint8Array(Buffer.from(stored.pqKemPrivateKeyHex, 'hex'));
-    const keypairObj = {
-      privateKey: dsaPrivateKey,
-      dsaPrivateKey,
-      kemPrivateKey,
-      publicKeyHex: stored.pqPublicKeyHex
-    };
-    (window as any).__brone_keypair = keypairObj;
-    return keypairObj;
+    if (dsaPrivateKey.length === 4896 && kemPrivateKey.length === 3168) {
+      const keypairObj = {
+        privateKey: dsaPrivateKey,
+        dsaPrivateKey,
+        kemPrivateKey,
+        publicKeyHex: stored.pqPublicKeyHex
+      };
+      (window as any).__brone_keypair = keypairObj;
+      return keypairObj;
+    }
   }
 
   const dsaKeys = ml_dsa87.keygen();

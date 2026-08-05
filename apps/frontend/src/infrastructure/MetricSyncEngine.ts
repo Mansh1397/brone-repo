@@ -61,6 +61,10 @@ export class MetricSyncEngine {
 
     // 2. Generate signature using ML-DSA-87
     const encoder = new TextEncoder();
+    if (!(privateKey instanceof Uint8Array) || privateKey.length !== 4896) {
+      console.warn(`[METRICS WARNING] Metric signature bypassed: Invalid privateKey length ${privateKey?.length}`);
+      return;
+    }
     const signatureBytes = ml_dsa87.sign(privateKey, encoder.encode(message));
 
     // Convert signature bytes to hex
