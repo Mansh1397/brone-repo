@@ -32,7 +32,7 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
       const pubKeyBytes = new Uint8Array(Buffer.from(dsaPubHex, 'hex'));
       const messageBytes = new TextEncoder().encode(messageObject);
       const signatureBytes = new Uint8Array(Buffer.from(signature, 'hex'));
-      isValid = ml_dsa87.verify(pubKeyBytes, messageBytes, signatureBytes);
+      isValid = ml_dsa87.verify(signatureBytes, messageBytes, pubKeyBytes);
     } catch (err) {
       isValid = false;
     }

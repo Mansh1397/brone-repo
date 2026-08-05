@@ -33,7 +33,7 @@ export async function verifyRingSignature(
     for (const pubKeyHex of ring) {
       try {
         const pkBytes = new Uint8Array(Buffer.from(pubKeyHex, 'hex'));
-        if (ml_dsa87.verify(pkBytes, messageBytes, sigBytes)) {
+        if (ml_dsa87.verify(sigBytes, messageBytes, pkBytes)) {
           isValid = true;
           break;
         }
