@@ -366,9 +366,10 @@ const handleRegisterPublicKey = async (req: any, res: any) => {
     if (!public_key_hex) {
       return res.status(400).json({ error: "Missing public_key_hex payload" });
     }
+    const keyHash = crypto.createHash("sha256").update(public_key_hex).digest("hex");
     await pool.query({
-      text: "INSERT INTO anonymous_public_keys (public_key_hex) VALUES ($1) ON CONFLICT DO NOTHING;",
-      values: [public_key_hex]
+      text: "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+      values: [keyHash, public_key_hex]
     });
     return res.status(200).json({ success: true });
   } catch (error: any) {
@@ -448,9 +449,10 @@ const handlePostArbitration = async (req: any, res: any) => {
 
     // 3. Double-Spend Protection: check if signature already exists in signatures table
     const signatureChallenge = ring_signature.challenge;
-    const replayCheck = await pool.query("SELECT tx_hash FROM signatures WHERE tx_hash = $1", [signatureChallenge]);
+    const signatureHash = crypto.createHash("sha256").update(signatureChallenge).digest("hex");
+    const replayCheck = await pool.query("SELECT tx_hash FROM signatures WHERE tx_hash = $1", [signatureHash]);
     if (replayCheck.rows.length > 0) {
-      console.log('[ARBITRATION REPLAY COLLISION]:', signatureChallenge);
+      console.log('[ARBITRATION REPLAY COLLISION]:', signatureHash);
       return res.status(409).json({ error: "Security Collision: Signature replay state detected." });
     }
 
@@ -483,7 +485,7 @@ const handlePostArbitration = async (req: any, res: any) => {
     // 5. Insert signature to prevent replay
     await pool.query({
       text: "INSERT INTO signatures (tx_hash) VALUES ($1) ON CONFLICT DO NOTHING;",
-      values: [signatureChallenge]
+      values: [signatureHash]
     });
 
     // 6. Insert post into decentralized_posts

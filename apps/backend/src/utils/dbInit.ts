@@ -48,12 +48,33 @@ export async function initDB(): Promise<void> {
     `);
 
     // Table 4: signatures (Double-Spend Guard)
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS signatures (
-        tx_hash TEXT PRIMARY KEY,
-        recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-      );
+    const hasTxHash = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'signatures' AND column_name = 'tx_hash';
     `);
+    if (hasTxHash.rows.length === 0) {
+      await pool.query(`DROP TABLE IF EXISTS signatures CASCADE;`);
+      await pool.query(`
+        CREATE TABLE signatures (
+          tx_hash VARCHAR(64) PRIMARY KEY,
+          recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    } else {
+      const txHashType = await pool.query(`
+        SELECT character_maximum_length FROM information_schema.columns
+        WHERE table_name = 'signatures' AND column_name = 'tx_hash';
+      `);
+      if (txHashType.rows[0]?.character_maximum_length !== 64) {
+        await pool.query(`DROP TABLE IF EXISTS signatures CASCADE;`);
+        await pool.query(`
+          CREATE TABLE signatures (
+            tx_hash VARCHAR(64) PRIMARY KEY,
+            recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+      }
+    }
 
     // Table 5: anonymous_votes
     await pool.query(`
@@ -66,15 +87,19 @@ export async function initDB(): Promise<void> {
     `);
 
     // Table 6: anonymous_public_keys
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS anonymous_public_keys (
-        public_key_hex TEXT PRIMARY KEY
-      );
+    const hasKeyHash = await pool.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'anonymous_public_keys' AND column_name = 'key_hash';
     `);
-
-    // Perform migrations to expand key datatypes for post-quantum sizes
-    await pool.query(`ALTER TABLE signatures ALTER COLUMN tx_hash TYPE TEXT;`).catch(() => {});
-    await pool.query(`ALTER TABLE anonymous_public_keys ALTER COLUMN public_key_hex TYPE TEXT;`).catch(() => {});
+    if (hasKeyHash.rows.length === 0) {
+      await pool.query(`DROP TABLE IF EXISTS anonymous_public_keys CASCADE;`);
+      await pool.query(`
+        CREATE TABLE anonymous_public_keys (
+          key_hash VARCHAR(64) PRIMARY KEY,
+          public_key_hex TEXT NOT NULL
+        );
+      `);
+    }
 
     console.log('[DB] Zero-Knowledge schema verified.');
   } catch (error: any) {
