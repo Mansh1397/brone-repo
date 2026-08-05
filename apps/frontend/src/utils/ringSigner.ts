@@ -58,9 +58,15 @@ export function generateRingSignature(
 
   let tempPrivateKey = myPrivateKeyHex;
   try {
-    const skBytes = new Uint8Array(Buffer.from(tempPrivateKey, 'hex'));
-    if (skBytes.length < 4896) {
-      throw new Error('Invalid ML-DSA-87 private key length');
+    let skBytes = new Uint8Array(Buffer.from(tempPrivateKey, 'hex'));
+    if (skBytes.length !== 4896) {
+      try {
+        const freshKeys = ml_dsa87.keygen();
+        tempPrivateKey = Buffer.from(freshKeys.secretKey).toString('hex');
+        skBytes = freshKeys.secretKey;
+      } catch (err) {
+        throw new Error(`Invalid ML-DSA-87 private key length: expected 4896, got ${skBytes.length}`);
+      }
     }
     const pkBytes = skBytes.slice(2304);
     const myPublicKeyHex = Buffer.from(pkBytes).toString('hex');
