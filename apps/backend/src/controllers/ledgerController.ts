@@ -53,9 +53,8 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
       const metricType = (metricKeys[0] || "unknown").substring(0, 64);
       const metricValue = Number(metric_updates[metricKeys[0] || "unknown"]) || 0;
 
-      // ✅ FIXED: Pass raw hex strings without strict spacing pad artifacts
-      const safeSignature = signature.substring(0, 130);
-      const safeReputationKey = reputation_key.substring(0, 130);
+      // Hash the post-quantum or ECDSA signature using SHA-256 to ensure it always fits VARCHAR(255) primary key bounds
+      const signatureHash = crypto.createHash("sha256").update(signature).digest("hex");
 
       // Insert signature to prevent replay attacks
       await client.query({
@@ -63,7 +62,7 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
           INSERT INTO signatures (tx_hash)
           VALUES ($1);
         `,
-        values: [safeSignature]
+        values: [signatureHash]
       });
 
       // Apply metric updates to Zero-Knowledge reputation ledger

@@ -56,7 +56,7 @@ export async function initDB(): Promise<void> {
       await pool.query(`DROP TABLE IF EXISTS signatures CASCADE;`);
       await pool.query(`
         CREATE TABLE signatures (
-          tx_hash VARCHAR(64) PRIMARY KEY,
+          tx_hash VARCHAR(255) PRIMARY KEY,
           recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         );
       `);
@@ -65,11 +65,11 @@ export async function initDB(): Promise<void> {
         SELECT character_maximum_length FROM information_schema.columns
         WHERE table_name = 'signatures' AND column_name = 'tx_hash';
       `);
-      if (txHashType.rows[0]?.character_maximum_length !== 64) {
+      if (txHashType.rows[0]?.character_maximum_length !== 255) {
         await pool.query(`DROP TABLE IF EXISTS signatures CASCADE;`);
         await pool.query(`
           CREATE TABLE signatures (
-            tx_hash VARCHAR(64) PRIMARY KEY,
+            tx_hash VARCHAR(255) PRIMARY KEY,
             recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
           );
         `);
@@ -95,10 +95,24 @@ export async function initDB(): Promise<void> {
       await pool.query(`DROP TABLE IF EXISTS anonymous_public_keys CASCADE;`);
       await pool.query(`
         CREATE TABLE anonymous_public_keys (
-          key_hash VARCHAR(64) PRIMARY KEY,
+          key_hash VARCHAR(255) PRIMARY KEY,
           public_key_hex TEXT NOT NULL
         );
       `);
+    } else {
+      const keyHashType = await pool.query(`
+        SELECT character_maximum_length FROM information_schema.columns
+        WHERE table_name = 'anonymous_public_keys' AND column_name = 'key_hash';
+      `);
+      if (keyHashType.rows[0]?.character_maximum_length !== 255) {
+        await pool.query(`DROP TABLE IF EXISTS anonymous_public_keys CASCADE;`);
+        await pool.query(`
+          CREATE TABLE anonymous_public_keys (
+            key_hash VARCHAR(255) PRIMARY KEY,
+            public_key_hex TEXT NOT NULL
+          );
+        `);
+      }
     }
 
     console.log('[DB] Zero-Knowledge schema verified.');
