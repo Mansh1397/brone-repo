@@ -492,11 +492,11 @@ const handlePostArbitration = async (req: any, res: any) => {
     const safeGeohash = geohash.substring(0, 20);
     await pool.query({
       text: `
-        INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at)
-        VALUES ($1, $2, $3, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
-        ON CONFLICT (ipfs_hash) DO NOTHING;
+        INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, encrypted_payload, status, sprt_score, submitted_at)
+        VALUES ($1, $2, $3, $4, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
+        ON CONFLICT (ipfs_hash) DO UPDATE SET encrypted_payload = EXCLUDED.encrypted_payload;
       `,
-      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature)]
+      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), encrypted_payload]
     });
 
     return res.status(201).json({
@@ -651,14 +651,13 @@ const handleIPFSExtraction = async (req: any, res: any) => {
       return res.status(400).json({ error: "Security Denial: Invalid IPFS CID format." });
     }
 
-    // Grab mock payload data. Fallback cleanly if the mock data store doesn't have your specific test string key.
-    let encryptedPayload = mockEncryptedData[ipfs_hash];
-    if (!encryptedPayload) {
-      encryptedPayload = "ENC_GCM:Ym9uc19vcl9uYXJ2b3NfbGFzdF9jYW5pbmc=";
-    }
-
-    const postResult = await pool.query("SELECT ring_signature FROM decentralized_posts WHERE ipfs_hash = $1", [ipfs_hash]);
+    const postResult = await pool.query("SELECT ring_signature, encrypted_payload FROM decentralized_posts WHERE ipfs_hash = $1", [ipfs_hash]);
     const ringSig = postResult.rows[0]?.ring_signature ? JSON.parse(postResult.rows[0].ring_signature) : null;
+    
+    let encryptedPayload = postResult.rows[0]?.encrypted_payload;
+    if (!encryptedPayload) {
+      encryptedPayload = mockEncryptedData[ipfs_hash] || "ENC_GCM:Ym9uc19vcl9uYXJ2b3NfbGFzdF9jYW5pbmc=";
+    }
 
     return res.status(200).json({
       ipfs_hash,
