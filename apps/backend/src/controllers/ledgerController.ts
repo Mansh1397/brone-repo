@@ -26,7 +26,8 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
 
     let isValid = false;
     try {
-      const { ml_dsa87 } = await import('@noble/post-quantum/ml-dsa.js');
+      const mlDsaModule = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
+      const { ml_dsa87 } = await mlDsaModule;
       const dsaPubHex = reputation_key.split(':')[0];
       const pubKeyBytes = new Uint8Array(Buffer.from(dsaPubHex, 'hex'));
       const messageBytes = new TextEncoder().encode(messageObject);

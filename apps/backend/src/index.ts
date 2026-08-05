@@ -24,7 +24,8 @@ export async function verifyRingSignature(
     if (typeof challenge !== 'string' || typeof message !== 'string' || !Array.isArray(ring)) {
       return false;
     }
-    const { ml_dsa87 } = await import('@noble/post-quantum/ml-dsa.js');
+    const mlDsaModule = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
+    const { ml_dsa87 } = await mlDsaModule;
     const messageBytes = new TextEncoder().encode(message);
     const sigBytes = new Uint8Array(Buffer.from(challenge, 'hex'));
 
