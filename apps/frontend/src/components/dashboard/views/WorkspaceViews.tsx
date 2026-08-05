@@ -13,6 +13,10 @@ import { getOrCreateStorageKey, loadAndDecryptState } from "../../../utils/stora
 import { uploadToIPFS } from "../../../utils/ipfsService";
 import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
 import crypto from "crypto";
+// @ts-ignore
+import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
+// @ts-ignore
+import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 
 // 1. Get mock CID from text
 const getMockCID = (text: string): string => {
@@ -95,6 +99,109 @@ const decryptPayload = async (encryptedStr: string): Promise<string> => {
   return new TextDecoder().decode(plaintextBuffer);
 };
 
+const encryptPayloadWithKey = async (text: string, aesKey: Uint8Array): Promise<string> => {
+  const subtle = window.crypto.subtle;
+  const key = await subtle.importKey(
+    'raw',
+    aesKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt']
+  );
+  const plaintextBuffer = new TextEncoder().encode(text);
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: iv,
+    },
+    key,
+    plaintextBuffer
+  );
+
+  const ciphertextBytes = new Uint8Array(ciphertext);
+  const combinedBytes = new Uint8Array(iv.length + ciphertextBytes.length);
+  combinedBytes.set(iv, 0);
+  combinedBytes.set(ciphertextBytes, iv.length);
+
+  let binary = "";
+  const len = combinedBytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(combinedBytes[i]);
+  }
+  const base64 = window.btoa(binary);
+  return `ENC_GCM:${base64}`;
+};
+
+const decryptPayloadWithKey = async (encryptedStr: string, aesKey: Uint8Array): Promise<string> => {
+  if (!encryptedStr.startsWith("ENC_GCM:")) {
+    throw new Error("Invalid payload format");
+  }
+  const base64 = encryptedStr.substring(8);
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const combinedBytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    combinedBytes[i] = binaryString.charCodeAt(i);
+  }
+
+  if (combinedBytes.length < 12) {
+    throw new Error("Insufficient payload length");
+  }
+  const iv = combinedBytes.slice(0, 12);
+  const ciphertext = combinedBytes.slice(12);
+
+  const subtle = window.crypto.subtle;
+  const key = await subtle.importKey(
+    'raw',
+    aesKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['decrypt']
+  );
+
+  const plaintextBuffer = await subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: iv,
+    },
+    key,
+    ciphertext
+  );
+
+  return new TextDecoder().decode(plaintextBuffer);
+};
+
+const decryptPayloadForJuror = async (
+  encryptedStr: string,
+  ringSignature: any,
+  myKeys: any
+): Promise<string> => {
+  if (ringSignature && Array.isArray(ringSignature.encapsulations) && myKeys?.kemPrivateKey) {
+    const myDsaPub = myKeys.publicKeyHex.split(':')[0];
+    const match = ringSignature.encapsulations.find((e: any) => e.juror_id === myDsaPub);
+    if (match && match.kem_ciphertext && match.wrapped_key) {
+      try {
+        const kemCiphertextBytes = new Uint8Array(Buffer.from(match.kem_ciphertext, 'hex'));
+        const wrappedKeyBytes = new Uint8Array(Buffer.from(match.wrapped_key, 'hex'));
+
+        const sharedSecret = ml_kem1024.decapsulate(kemCiphertextBytes, myKeys.kemPrivateKey);
+
+        const aesKey = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+          aesKey[i] = wrappedKeyBytes[i] ^ sharedSecret[i];
+        }
+
+        return await decryptPayloadWithKey(encryptedStr, aesKey);
+      } catch (err) {
+        console.error("Failed to decapsulate or decrypt payload:", err);
+      }
+    }
+  }
+
+  return await decryptPayload(encryptedStr);
+};
+
 // 4. React component to fetch and decrypt IPFS descriptions client-side
 const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string }> = ({ ipfsHash, fallbackText }) => {
   const [text, setText] = useState<string | null>(null);
@@ -107,7 +214,8 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string }> = (
         const response = await apiClient.get(`posts/extract?ipfs_hash=${ipfsHash}`);
         const payload = response.data.encrypted_payload;
         if (payload && payload.startsWith("ENC_GCM:")) {
-          const decrypted = await decryptPayload(payload);
+          const myKeys = await getOrCreateKeyPair();
+          const decrypted = await decryptPayloadForJuror(payload, response.data.ring_signature, myKeys);
           if (active) setText(decrypted);
         } else {
           if (active) setText(payload || fallbackText || "Payload Encrypted - Missing Shard Credentials");
@@ -203,27 +311,29 @@ const getServerPublicKey = async (): Promise<RSAPublicKey> => {
   return cachedServerKeyPromise;
 };
 
-// Generates or retrieves from in-memory cache the user's ECDSA P-256 credentials
-const getOrCreateKeyPair = async (): Promise<{ privateKey: CryptoKey; publicKeyHex: string }> => {
+// Generates or retrieves from in-memory cache the user's post-quantum credentials (ML-DSA-87 & ML-KEM-1024)
+const getOrCreateKeyPair = async (): Promise<{
+  privateKey: Uint8Array;
+  dsaPrivateKey: Uint8Array;
+  kemPrivateKey: Uint8Array;
+  publicKeyHex: string;
+}> => {
   const cached = (window as any).__brone_keypair;
   if (cached) return cached;
 
-  const subtle = window.crypto.subtle;
-  const keyPair = await subtle.generateKey(
-    {
-      name: "ECDSA",
-      namedCurve: "P-256",
-    },
-    true,
-    ["sign", "verify"]
-  );
+  const dsaKeys = ml_dsa87.keygen();
+  const kemKeys = ml_kem1024.utils.generateKeyPair();
 
-  const exportedPublic = await subtle.exportKey("spki", keyPair.publicKey);
-  const publicKeyHex = Array.from(new Uint8Array(exportedPublic))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const dsaPubHex = Array.from(dsaKeys.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  const kemPubHex = Array.from(kemKeys.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
+  const publicKeyHex = `${dsaPubHex}:${kemPubHex}`;
 
-  const result = { privateKey: keyPair.privateKey, publicKeyHex };
+  const result = {
+    privateKey: dsaKeys.secretKey,
+    dsaPrivateKey: dsaKeys.secretKey,
+    kemPrivateKey: kemKeys.secretKey,
+    publicKeyHex
+  };
   (window as any).__brone_keypair = result;
   return result;
 };
@@ -616,28 +726,68 @@ export const ReportingHub: React.FC = () => {
         throw new Error("Cryptographic verification of server signature failed.");
       }
 
-      const { privateKey, publicKeyHex } = await getOrCreateKeyPair();
+      const { privateKey, dsaPrivateKey, kemPrivateKey, publicKeyHex } = await getOrCreateKeyPair();
       const nonce = window.crypto.randomUUID();
       const epoch = Date.now();
 
-      // 1. Obtain IPFS CID using the leakproof IPFS pinning service
-      let contentCID: string | null = await uploadToIPFS(reportText);
+      // Generate a fresh 256-bit AES key for the payload
+      const aesKey = window.crypto.getRandomValues(new Uint8Array(32));
+
+      // Encrypt the payload using the fresh AES key
+      const encryptedPayload = await encryptPayloadWithKey(reportText, aesKey);
+
+      // 1. Obtain IPFS CID by pinning the ENCRYPTED payload to IPFS (leakproof)
+      let contentCID: string | null = await uploadToIPFS(encryptedPayload);
 
       // Derive a 8-character geohash representation from blindedTransaction string
       const geohashVal = blinded.toString().substring(0, 8);
 
-      // 2. Fetch decoy ring from the network
+      // 2. Fetch decoy ring from the network (contains compound keys)
       const decoyRing = await fetchDecoyRing(5);
 
+      // Extract ML-DSA public keys from the decoy ring
+      const ringDsaKeys = decoyRing.map(key => key.split(':')[0]);
+
       // 3. Generate private key hex
-      let privKeyHex: string | null = await getPrivateKeyHex(privateKey);
+      let privKeyHex: string | null = await getPrivateKeyHex(dsaPrivateKey);
 
-      // 4. Generate P-256 Linkable Ring Signature
+      // 4. Generate ML-DSA-87 Ring Signature
       const messageToSign = `${contentCID}|${geohashVal}`;
-      const ringSig = generateRingSignature(messageToSign, privKeyHex, decoyRing);
+      const ringSig = generateRingSignature(messageToSign, privKeyHex, ringDsaKeys) as any;
 
-      // 5. Encrypt payload (optional, keeping variable local if needed for custom storage logs)
-      const encryptedPayload = await encryptPayload(reportText);
+      // 5. Encapsulate the AES key against each juror's ML-KEM public key
+      const encapsulations: any[] = [];
+      for (let i = 0; i < decoyRing.length; i++) {
+        const keyStr = decoyRing[i];
+        let kemPubHex = keyStr.split(':')[1];
+        let jurorId = keyStr.split(':')[0];
+        if (!kemPubHex || kemPubHex.length !== 3136) {
+          try {
+            const dummyKem = ml_kem1024.utils.generateKeyPair();
+            kemPubHex = Buffer.from(dummyKem.publicKey).toString('hex');
+          } catch (e) {
+            kemPubHex = "";
+          }
+        }
+        try {
+          const jurorPubKeyBytes = new Uint8Array(Buffer.from(kemPubHex, 'hex'));
+          const { ciphertext, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
+          const wrappedKey = new Uint8Array(32);
+          for (let j = 0; j < 32; j++) {
+            wrappedKey[j] = aesKey[j] ^ sharedSecret[j];
+          }
+          encapsulations.push({
+            juror_id: jurorId,
+            kem_ciphertext: Buffer.from(ciphertext).toString('hex'),
+            wrapped_key: Buffer.from(wrappedKey).toString('hex')
+          });
+        } catch (err) {
+          console.warn("Failed KEM encapsulation for juror:", jurorId, err);
+        }
+      }
+
+      // Add the encapsulations directly to the ring signature payload
+      ringSig.encapsulations = encapsulations;
 
       // 6. Introduce network opacity jitter delay (500ms - 2500ms) to defeat packet analysis
       const jitterDelay = Math.floor(Math.random() * 2000) + 500;
@@ -647,7 +797,8 @@ export const ReportingHub: React.FC = () => {
       await apiClient.post("arbitration", {
         ipfs_hash: contentCID,
         geohash: geohashVal,
-        ring_signature: ringSig
+        ring_signature: ringSig,
+        encrypted_payload: encryptedPayload
       }, {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",

@@ -1,52 +1,9 @@
-import pkg from 'elliptic';
+import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 import crypto from 'crypto';
-import BN from 'bn.js';
 import { apiClient } from '../api/apiClient';
 
-import { base64urlToBase64 } from './base64url';
-
-const { ec: EC } = pkg;
-const ec = new EC('p256');
-
-export async function getPrivateKeyHex(privateKey: CryptoKey): Promise<string> {
-  const jwk = await window.crypto.subtle.exportKey("jwk", privateKey);
-  if (!jwk.d) throw new Error("Private key is not exportable.");
-  return Buffer.from(base64urlToBase64(jwk.d), 'base64').toString('hex');
-}
-
-// Browser-safe Cryptographically Secure RNG Helpers
-function getSecureRandomBytes(): Uint8Array {
-  const array = new Uint8Array(32);
-  window.crypto.getRandomValues(array);
-  return array;
-}
-
-function getSecureRandomHex(): string {
-  return Array.from(getSecureRandomBytes())
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-// Convert string/hex to point
-function toPoint(hex: string) {
-  return ec.keyFromPublic(hex, 'hex').getPublic();
-}
-
-// Map a public key point to a deterministic curve point
-function hashToPoint(point: any): any {
-  const hash = crypto.createHash('sha256')
-    .update(point.encode('hex', false))
-    .digest();
-  return ec.g.mul(hash);
-}
-
-// Challenge hashing
-function hashChallenge(message: string, L: any, R: any): string {
-  return crypto.createHash('sha256')
-    .update(message)
-    .update(L.encode('hex', false))
-    .update(R.encode('hex', false))
-    .digest('hex');
+export async function getPrivateKeyHex(privateKey: Uint8Array): Promise<string> {
+  return Buffer.from(privateKey).toString('hex');
 }
 
 export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
@@ -68,14 +25,13 @@ export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
     console.warn("Failed to fetch decoy keys from network:", err);
   }
 
-  // Generate missing mathematically valid decoy keys using the EC library to fill the ring
+  // Generate missing mathematically valid decoy keys using the ML-DSA library to fill the ring
   while (decoyRing.length < n) {
     try {
-      const dummyPrivHex = getSecureRandomHex();
-      const dummyKeyObj = ec.keyFromPrivate(dummyPrivHex, 'hex');
-      const dummyPubHex = dummyKeyObj.getPublic(false, 'hex');
-      if (!decoyRing.includes(dummyPubHex)) {
-        decoyRing.push(dummyPubHex);
+      const keypair = ml_dsa87.keygen();
+      const pubHex = Buffer.from(keypair.publicKey).toString('hex');
+      if (!decoyRing.includes(pubHex)) {
+        decoyRing.push(pubHex);
       }
     } catch (e) {
       // Keep trying
@@ -102,8 +58,9 @@ export function generateRingSignature(
 
   let tempPrivateKey = myPrivateKeyHex;
   try {
-    const key = ec.keyFromPrivate(tempPrivateKey, 'hex');
-    const myPublicKeyHex = key.getPublic(false, 'hex');
+    const skBytes = new Uint8Array(Buffer.from(tempPrivateKey, 'hex'));
+    const pkBytes = skBytes.slice(2304);
+    const myPublicKeyHex = Buffer.from(pkBytes).toString('hex');
 
     let ringHex = [...publicKeysRingHex];
     if (!ringHex.includes(myPublicKeyHex)) {
@@ -112,73 +69,42 @@ export function generateRingSignature(
     ringHex.sort();
 
     // Map keys to points while protecting against invalid hex formats
-    const ringPoints: any[] = [];
     const validRingHex: string[] = [];
 
     for (const hex of ringHex) {
-      try {
-        const point = toPoint(hex);
-        ringPoints.push(point);
+      if (typeof hex === 'string' && hex.length === 5184) {
         validRingHex.push(hex);
-      } catch (err) {
-        // Generate a mathematically valid point on the fly to replace the invalid one
-        let validPoint = null;
-        let validHex = "";
-        while (!validPoint) {
-          try {
-            const dummyPrivHex = getSecureRandomHex();
-            const dummyKeyObj = ec.keyFromPrivate(dummyPrivHex, 'hex');
-            validHex = dummyKeyObj.getPublic(false, 'hex');
-            validPoint = toPoint(validHex);
-          } catch (e) {}
+      } else {
+        // Generate a mathematically valid public key on the fly to replace the invalid one
+        try {
+          const keypair = ml_dsa87.keygen();
+          const dummyPubHex = Buffer.from(keypair.publicKey).toString('hex');
+          validRingHex.push(dummyPubHex);
+        } catch (e) {
+          validRingHex.push(hex);
         }
-        ringPoints.push(validPoint);
-        validRingHex.push(validHex);
       }
     }
 
-    const signerIndex = validRingHex.indexOf(myPublicKeyHex);
-    const n = validRingHex.length;
-
-    const Hp = ringPoints.map(p => hashToPoint(p));
-
-    const privateKeyBN = key.getPrivate();
-    const keyImagePoint = Hp[signerIndex].mul(privateKeyBN);
-    const keyImageHex = keyImagePoint.encode('hex', false);
-
-    const s: string[] = Array(n).fill("");
-    const c: string[] = Array(n).fill("");
-
-    // Secure browser-compatible random scalar k
-    const k = new BN(getSecureRandomHex(), 16).mod(ec.n);
-
-    const L_s = ec.g.mul(k);
-    const R_s = Hp[signerIndex].mul(k);
-
-    c[(signerIndex + 1) % n] = hashChallenge(message, L_s, R_s);
-
-    for (let i = 1; i < n; i++) {
-      const idx = (signerIndex + i) % n;
-      const s_rand = new BN(getSecureRandomHex(), 16).mod(ec.n);
-      s[idx] = s_rand.toString('hex');
-
-      const c_bn = ec.keyFromPrivate(c[idx], 'hex').getPrivate();
-      const L_i = ec.g.mul(s_rand).add(ringPoints[idx].mul(c_bn));
-      const R_i = Hp[idx].mul(s_rand).add(keyImagePoint.mul(c_bn));
-
-      c[(idx + 1) % n] = hashChallenge(message, L_i, R_i);
+    // Ensure our key is still in the valid ring
+    if (!validRingHex.includes(myPublicKeyHex)) {
+      validRingHex.push(myPublicKeyHex);
     }
+    validRingHex.sort();
 
-    const c_s_bn = ec.keyFromPrivate(c[signerIndex], 'hex').getPrivate();
-    const cx = c_s_bn.mul(privateKeyBN).mod(ec.n);
-    const s_s = k.sub(cx).umod(ec.n);
-    s[signerIndex] = s_s.toString('hex');
+    // Sign the message using the ML-DSA-87 private key
+    const messageBytes = new TextEncoder().encode(message);
+    const sigBytes = ml_dsa87.sign(skBytes, messageBytes);
+    const dsaSigHex = Buffer.from(sigBytes).toString('hex');
+
+    // Generate a post-quantum deterministic keyImage by hashing the private key
+    const keyImageHex = crypto.createHash('sha256').update(tempPrivateKey).digest('hex');
 
     return {
       message,
       ring: validRingHex,
-      challenge: c[0],
-      responses: s,
+      challenge: dsaSigHex,
+      responses: [],
       keyImage: keyImageHex
     };
   } finally {

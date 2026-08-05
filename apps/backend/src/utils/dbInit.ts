@@ -50,7 +50,7 @@ export async function initDB(): Promise<void> {
     // Table 4: signatures (Double-Spend Guard)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS signatures (
-        tx_hash VARCHAR(255) PRIMARY KEY,
+        tx_hash TEXT PRIMARY KEY,
         recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -68,9 +68,13 @@ export async function initDB(): Promise<void> {
     // Table 6: anonymous_public_keys
     await pool.query(`
       CREATE TABLE IF NOT EXISTS anonymous_public_keys (
-        public_key_hex VARCHAR(255) PRIMARY KEY
+        public_key_hex TEXT PRIMARY KEY
       );
     `);
+
+    // Perform migrations to expand key datatypes for post-quantum sizes
+    await pool.query(`ALTER TABLE signatures ALTER COLUMN tx_hash TYPE TEXT;`).catch(() => {});
+    await pool.query(`ALTER TABLE anonymous_public_keys ALTER COLUMN public_key_hex TYPE TEXT;`).catch(() => {});
 
     console.log('[DB] Zero-Knowledge schema verified.');
   } catch (error: any) {

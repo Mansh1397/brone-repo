@@ -14,6 +14,7 @@
   "dependencies": {
     "@brone/crypto-core": "*",
     "@brone/types": "*",
+    "@noble/post-quantum": "^0.6.1",
     "argon2": "^0.44.0",
     "axios": "^1.16.1",
     "bn.js": "^5.2.5",

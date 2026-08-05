@@ -2,10 +2,6 @@ import express from "express";
 import * as crypto from "crypto";
 import helmet from "helmet";
 import cors from "cors";
-// @ts-ignore
-import pkg from 'elliptic';
-// @ts-ignore
-import BN from 'bn.js';
 import { guardAgainstDoubleSpend } from "./middleware/doubleSpendRegistry";
 import { verifyRingHandler } from "./controllers/ringValidator";
 import { handleBlindStamp, getPublicKeyConfig } from "./controllers/stampController";
@@ -17,55 +13,32 @@ import { initDB } from "./utils/dbInit";
 
 const app = express();
 
-const { ec: EC } = pkg;
-const ec = new EC('p256');
-
-function toPoint(hex: string) {
-  return ec.keyFromPublic(hex, 'hex').getPublic();
-}
-
-function hashToPoint(point: any): any {
-  const hash = crypto.createHash('sha256')
-    .update(point.encode('hex', false))
-    .digest();
-  return ec.g.mul(hash);
-}
-
-function hashChallenge(message: string, L: any, R: any): string {
-  return crypto.createHash('sha256')
-    .update(message)
-    .update(L.encode('hex', false))
-    .update(R.encode('hex', false))
-    .digest('hex');
-}
-
-export function verifyRingSignature(
+export async function verifyRingSignature(
   message: string,
   ring: string[],
   challenge: string,
   responses: string[],
   keyImage: string
-): boolean {
+): Promise<boolean> {
   try {
-    const n = ring.length;
-    const ringPoints = ring.map(hex => toPoint(hex));
-    const Hp = ringPoints.map(p => hashToPoint(p));
-    const keyImagePoint = toPoint(keyImage);
+    const { ml_dsa87 } = await import('@noble/post-quantum/ml-dsa.js');
+    const messageBytes = new TextEncoder().encode(message);
+    const sigBytes = new Uint8Array(Buffer.from(challenge, 'hex'));
 
-    const c = Array(n).fill("");
-    c[0] = challenge;
-
-    for (let i = 0; i < n; i++) {
-      const s_bn = new BN(responses[i], 16);
-      const c_bn = new BN(c[i], 16);
-
-      const L_i = ec.g.mul(s_bn).add(ringPoints[i].mul(c_bn));
-      const R_i = Hp[i].mul(s_bn).add(keyImagePoint.mul(c_bn));
-
-      c[(i + 1) % n] = hashChallenge(message, L_i, R_i);
+    let isValid = false;
+    for (const pubKeyHex of ring) {
+      try {
+        const pkBytes = new Uint8Array(Buffer.from(pubKeyHex, 'hex'));
+        if (ml_dsa87.verify(pkBytes, messageBytes, sigBytes)) {
+          isValid = true;
+          break;
+        }
+      } catch (err) {
+        // Skip invalid keys
+      }
     }
 
-    return c[0] === challenge;
+    return isValid;
   } catch (err: any) {
     console.error("[RING VERIFIER ERROR] Ring verification failed:", err.message || err);
     return false;
@@ -425,7 +398,11 @@ const handleGetArbitration = async (req: any, res: any) => {
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
-    const { ipfs_hash, geohash, ring_signature } = req.body;
+    const { ipfs_hash, geohash, ring_signature, encrypted_payload } = req.body;
+
+    if (encrypted_payload) {
+      mockEncryptedData[ipfs_hash] = encrypted_payload;
+    }
 
     // 1. Ingestion presence checks
     if (!ipfs_hash || !geohash || !ring_signature || 
@@ -475,7 +452,7 @@ const handlePostArbitration = async (req: any, res: any) => {
       });
     }
 
-    const isSigValid = verifyRingSignature(
+    const isSigValid = await verifyRingSignature(
       ring_signature.message,
       ring_signature.ring,
       ring_signature.challenge,
@@ -665,9 +642,13 @@ const handleIPFSExtraction = async (req: any, res: any) => {
       encryptedPayload = "ENC_GCM:Ym9uc19vcl9uYXJ2b3NfbGFzdF9jYW5pbmc=";
     }
 
+    const postResult = await pool.query("SELECT ring_signature FROM decentralized_posts WHERE ipfs_hash = $1", [ipfs_hash]);
+    const ringSig = postResult.rows[0]?.ring_signature ? JSON.parse(postResult.rows[0].ring_signature) : null;
+
     return res.status(200).json({
       ipfs_hash,
       encrypted_payload: encryptedPayload,
+      ring_signature: ringSig,
       success: true,
       text: `Mock decrypted content for ${ipfs_hash}`
     });

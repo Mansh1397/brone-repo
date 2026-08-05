@@ -13,16 +13,8 @@ export interface MetricSyncPayload {
 
 
 
-const getSubtleCrypto = () => {
-  if (typeof crypto !== "undefined" && crypto.subtle) return crypto.subtle;
-  if (typeof window !== "undefined" && window.crypto && window.crypto.subtle) return window.crypto.subtle;
-  try {
-    const nodeCrypto = require("crypto");
-    return nodeCrypto.webcrypto.subtle;
-  } catch (_) {
-    throw new Error("Subtle crypto not available");
-  }
-};
+// @ts-ignore
+import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 
 const getRandomUUID = () => {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -41,7 +33,7 @@ export class MetricSyncEngine {
    * Utilizes fetch with keepalive: true to prevent tab-closure data dropouts.
    */
   public static async dispatchMetricUpdate(
-    privateKey: CryptoKey,
+    privateKey: Uint8Array,
     reputationKeyHex: string,
     metricType: "posts" | "verifications" | "rewards",
     deltaValue: number
@@ -67,23 +59,12 @@ export class MetricSyncEngine {
       epoch,
     });
 
-    // 2. Generate signature
-    const subtle = getSubtleCrypto();
+    // 2. Generate signature using ML-DSA-87
     const encoder = new TextEncoder();
-    const signatureBuffer = await subtle.sign(
-      {
-        name: "ECDSA",
-        hash: { name: "SHA-256" },
-      },
-      privateKey,
-      encoder.encode(message)
-    );
+    const signatureBytes = ml_dsa87.sign(privateKey, encoder.encode(message));
 
-    // ❌ Remove or replace the Node Buffer dependency:
-    // const signatureHex = Buffer.from(signatureBuffer).toString("hex");
-
-    // ✅ Clean, browser-native ArrayBuffer-to-Hex conversion:
-    const signatureHex = Array.from(new Uint8Array(signatureBuffer))
+    // Convert signature bytes to hex
+    const signatureHex = Array.from(signatureBytes)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 

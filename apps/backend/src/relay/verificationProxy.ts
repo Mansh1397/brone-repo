@@ -84,6 +84,24 @@ interface JuryTask {
 }
 const activeTasks = new Map<string, JuryTask>();
 
+interface TaskEnvelope {
+  taskId: string;
+  encrypted_payload: string;
+  ring_signature: {
+    message: string;
+    ring: string[];
+    challenge: string;
+    responses: string[];
+    keyImage: string;
+    encapsulations: {
+      juror_id: string;
+      kem_ciphertext: string;
+      wrapped_key: string;
+    }[];
+  };
+}
+const taskEnvelopes = new Map<string, TaskEnvelope>();
+
 // Seed Data: 100 active community nodes in Gurugram
 const MOCK_CHANNEL_HASH = "gurugram_channel_hash";
 for (let i = 1; i <= 100; i++) {
@@ -140,6 +158,20 @@ app.post("/submit", (req: Request, res: Response) => {
         approvalCount: 0,
         rejectionCount: 0,
         status: "PENDING"
+      });
+
+      // Save full post-quantum task envelope with lattice-ciphertext encapsulations
+      taskEnvelopes.set(payload_id, {
+        taskId: payload_id,
+        encrypted_payload: ciphertext || "",
+        ring_signature: {
+          message: payload_id,
+          ring: ratchet_header?.ring || [],
+          challenge: mac || "",
+          responses: [],
+          keyImage: "",
+          encapsulations: ratchet_header?.encapsulations || []
+        }
       });
 
       console.log(`[JURY DISPATCH] Task ${payload_id}: Registered 40% sampling size of (${targetPoolCount}) jurors.`);
@@ -324,6 +356,42 @@ app.post("/tasks/:taskId/vote", async (req: Request, res: Response) => {
 
     releaseTaskMutex(taskId);
   }
+});
+
+app.get("/tasks/:taskId", (req: Request, res: Response) => {
+  const { taskId } = req.params;
+  const jurorId = req.query.juror_id as string;
+
+  if (!taskId || !jurorId) {
+    return res.status(400).json({ error: "Missing taskId or jurorId query parameters" });
+  }
+
+  const envelope = taskEnvelopes.get(taskId);
+  if (!envelope) {
+    return res.status(404).json({ error: "Task envelope not found" });
+  }
+
+  // Filter KEM encapsulations to return ONLY the specific ciphertext targeted to this juror_id
+  const matchingEncapsulation = envelope.ring_signature.encapsulations.find(
+    (e) => e.juror_id === jurorId
+  );
+
+  if (!matchingEncapsulation) {
+    return res.status(403).json({ error: "Access Denied: No matching KEM encapsulation for this juror identity" });
+  }
+
+  return res.status(200).json({
+    taskId: envelope.taskId,
+    encrypted_payload: envelope.encrypted_payload,
+    ring_signature: {
+      message: envelope.ring_signature.message,
+      ring: envelope.ring_signature.ring,
+      challenge: envelope.ring_signature.challenge,
+      responses: envelope.ring_signature.responses,
+      keyImage: envelope.ring_signature.keyImage,
+      encapsulation: matchingEncapsulation
+    }
+  });
 });
 
 export default app;

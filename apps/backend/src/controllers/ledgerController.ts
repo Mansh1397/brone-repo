@@ -1,7 +1,6 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import { pool } from './ringValidator';
-
 export const handleMetricIncrement = async (req: Request, res: Response): Promise<void> => {
   try {
     const { reputation_key, metric_updates, nonce, epoch, signature } = req.body;
@@ -25,22 +24,20 @@ export const handleMetricIncrement = async (req: Request, res: Response): Promis
       epoch
     });
 
-    // Construct robust, valid 64-character chunked PEM structure
-    const base64Key = Buffer.from(reputation_key, 'hex').toString('base64');
-    const chunkedKey = base64Key.match(/.{1,64}/g)?.join('\n') || base64Key;
-    const publicKeyPem = `-----BEGIN PUBLIC KEY-----\n${chunkedKey}\n-----END PUBLIC KEY-----`;
+    let isValid = false;
+    try {
+      const { ml_dsa87 } = await import('@noble/post-quantum/ml-dsa.js');
+      const dsaPubHex = reputation_key.split(':')[0];
+      const pubKeyBytes = new Uint8Array(Buffer.from(dsaPubHex, 'hex'));
+      const messageBytes = new TextEncoder().encode(messageObject);
+      const signatureBytes = new Uint8Array(Buffer.from(signature, 'hex'));
+      isValid = ml_dsa87.verify(pubKeyBytes, messageBytes, signatureBytes);
+    } catch (err) {
+      isValid = false;
+    }
 
-    const isValid = crypto.verify(
-      "SHA256",
-      Buffer.from(messageObject),
-      {
-        key: publicKeyPem,
-        dsaEncoding: "ieee-p1363"
-      },
-      Buffer.from(signature, 'hex')
-    );
     if (!isValid) {
-      res.status(401).json({ error: "Security Denial: ECDSA payload validation mismatch." });
+      res.status(401).json({ error: "Security Denial: ML-DSA-87 payload validation mismatch." });
       return;
     }
 
