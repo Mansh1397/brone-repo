@@ -724,6 +724,22 @@ if (process.env.NODE_ENV !== "test") {
     // Run DB initialization/migration on boot
     try {
       await initDB();
+
+      // Environment-Gated Stale Post Cleanup Routine
+      if (process.env.APP_STAGE !== 'live' && process.env.NODE_ENV !== 'production') {
+        try {
+          await pool.query(`
+            DELETE FROM decentralized_posts 
+            WHERE status = 'PENDING' 
+            AND submitted_at < NOW() - INTERVAL '24 hours'
+          `);
+          console.log('[BETA CLEANUP] Stale pending jury posts cleared successfully.');
+        } catch (err) {
+          console.error('[BETA CLEANUP ERROR] Failed to clear stale posts:', err);
+        }
+      } else {
+        console.log('[LIVE MODE] Stale post auto-purge is disabled for production.');
+      }
     } catch (dbErr: any) {
       console.error("[BOOTSTRAP] Fatal database initialization failure:", dbErr.message || dbErr);
       process.exit(1);
