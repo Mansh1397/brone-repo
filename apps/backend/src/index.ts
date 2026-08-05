@@ -725,8 +725,11 @@ if (process.env.NODE_ENV !== "test") {
     try {
       await initDB();
 
-      // Environment-Gated Stale Post Cleanup Routine
-      if (process.env.APP_STAGE !== 'live' && process.env.NODE_ENV !== 'production') {
+      // Zero-Config Environment-Gated Stale Post Cleanup Routine
+      const isProductionDB = process.env.PGHOST === 'production-db-cluster.internal';
+      const shouldPurgeStalePosts = process.env.NODE_ENV !== 'production' || !isProductionDB;
+
+      if (shouldPurgeStalePosts) {
         try {
           await pool.query(`
             DELETE FROM decentralized_posts 
@@ -738,7 +741,7 @@ if (process.env.NODE_ENV !== "test") {
           console.error('[BETA CLEANUP ERROR] Failed to clear stale posts:', err);
         }
       } else {
-        console.log('[LIVE MODE] Stale post auto-purge is disabled for production.');
+        console.log('[LIVE MODE] Stale post auto-purge is disabled for production environments.');
       }
     } catch (dbErr: any) {
       console.error("[BOOTSTRAP] Fatal database initialization failure:", dbErr.message || dbErr);
