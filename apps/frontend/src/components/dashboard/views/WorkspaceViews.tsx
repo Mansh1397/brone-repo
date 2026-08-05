@@ -177,9 +177,18 @@ const decryptPayloadForJuror = async (
   ringSignature: any,
   myKeys: any
 ): Promise<string> => {
-  if (ringSignature && Array.isArray(ringSignature.encapsulations) && myKeys?.kemPrivateKey) {
+  if (ringSignature && myKeys?.kemPrivateKey) {
     const myDsaPub = myKeys.publicKeyHex.split(':')[0];
-    const match = ringSignature.encapsulations.find((e: any) => e.juror_id === myDsaPub);
+    let match = null;
+
+    if (Array.isArray(ringSignature.encapsulations)) {
+      match = ringSignature.encapsulations.find((e: any) => e.juror_id === myDsaPub);
+    } else if (ringSignature.encapsulation && ringSignature.encapsulation.juror_id === myDsaPub) {
+      match = ringSignature.encapsulation;
+    } else if (ringSignature.encapsulation) {
+      match = ringSignature.encapsulation;
+    }
+
     if (match && match.kem_ciphertext && match.wrapped_key) {
       try {
         const kemCiphertextBytes = new Uint8Array(Buffer.from(match.kem_ciphertext, 'hex'));

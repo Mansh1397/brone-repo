@@ -309,7 +309,7 @@ const handleGetFeed = async (req: any, res: any) => {
   try {
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, geohash, status, sprt_score, submitted_at 
+      SELECT ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at 
       FROM decentralized_posts 
       WHERE geohash LIKE $1 AND status = 'APPROVED' 
       ORDER BY submitted_at DESC LIMIT 50
@@ -324,6 +324,7 @@ const handleGetFeed = async (req: any, res: any) => {
       ipfs_hash: row.ipfs_hash,
       geohash: row.geohash,
       submittedat: row.submitted_at,
+      ring_signature: row.ring_signature ? JSON.parse(row.ring_signature) : null,
       description: ""
     }));
 
@@ -384,12 +385,18 @@ const handleGetArbitration = async (req: any, res: any) => {
   try {
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, geohash, status, sprt_score, submitted_at 
+      SELECT ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at 
       FROM decentralized_posts 
       WHERE geohash LIKE $1 AND status = 'PENDING' 
       ORDER BY RANDOM() LIMIT 10
     `, [geohashFilter]);
-    return res.status(200).json(result.rows);
+
+    const posts = result.rows.map((row: any) => ({
+      ...row,
+      ring_signature: row.ring_signature ? JSON.parse(row.ring_signature) : null
+    }));
+
+    return res.status(200).json(posts);
   } catch (error) {
     console.error("[ARBITRATION ERROR] Failed to fetch arbitration posts:", error);
     return res.status(200).json([]);
