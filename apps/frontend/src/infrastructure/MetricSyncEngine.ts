@@ -65,7 +65,7 @@ export class MetricSyncEngine {
       console.warn(`[METRICS WARNING] Metric signature bypassed: Invalid privateKey length ${privateKey?.length}`);
       return;
     }
-    const signatureBytes = ml_dsa87.sign(privateKey, encoder.encode(message));
+    const signatureBytes = ml_dsa87.sign(encoder.encode(message), privateKey);
 
     // Convert signature bytes to hex
     const signatureHex = Array.from(signatureBytes)

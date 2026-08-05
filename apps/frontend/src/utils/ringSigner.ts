@@ -101,9 +101,8 @@ export function generateRingSignature(
     }
     validRingHex.sort();
 
-    // Sign the message using the ML-DSA-87 private key
     const messageBytes = new TextEncoder().encode(message);
-    const sigBytes = ml_dsa87.sign(skBytes, messageBytes);
+    const sigBytes = ml_dsa87.sign(messageBytes, skBytes);
     const dsaSigHex = Buffer.from(sigBytes).toString('hex');
 
     // Generate a post-quantum deterministic keyImage by hashing the private key
