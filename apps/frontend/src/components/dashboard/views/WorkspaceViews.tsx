@@ -331,7 +331,7 @@ const getOrCreateKeyPair = async (): Promise<{
   if (cached && cached.dsaPrivateKey && cached.kemPrivateKey) return cached;
 
   const dsaKeys = ml_dsa87.keygen();
-  const kemKeys = ml_kem1024.utils.generateKeyPair();
+  const kemKeys = ml_kem1024.keygen();
 
   const dsaPubHex = Array.from(dsaKeys.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
   const kemPubHex = Array.from(kemKeys.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -772,7 +772,7 @@ export const ReportingHub: React.FC = () => {
         let jurorId = keyStr.split(':')[0];
         if (!kemPubHex || kemPubHex.length !== 3136) {
           try {
-            const dummyKem = ml_kem1024.utils.generateKeyPair();
+            const dummyKem = ml_kem1024.keygen();
             kemPubHex = Buffer.from(dummyKem.publicKey).toString('hex');
           } catch (e) {
             kemPubHex = "";
