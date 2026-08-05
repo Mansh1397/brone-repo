@@ -189,7 +189,7 @@ const decryptPayloadForJuror = async (
       match = ringSignature.encapsulation;
     }
 
-    if (match && match.kem_ciphertext && match.wrapped_key) {
+    if (match && typeof match.kem_ciphertext === 'string' && typeof match.wrapped_key === 'string') {
       try {
         const kemCiphertextBytes = new Uint8Array(Buffer.from(match.kem_ciphertext, 'hex'));
         const wrappedKeyBytes = new Uint8Array(Buffer.from(match.wrapped_key, 'hex'));
@@ -328,7 +328,7 @@ const getOrCreateKeyPair = async (): Promise<{
   publicKeyHex: string;
 }> => {
   const cached = (window as any).__brone_keypair;
-  if (cached) return cached;
+  if (cached && cached.dsaPrivateKey && cached.kemPrivateKey) return cached;
 
   const dsaKeys = ml_dsa87.keygen();
   const kemKeys = ml_kem1024.utils.generateKeyPair();

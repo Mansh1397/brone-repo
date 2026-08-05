@@ -21,6 +21,9 @@ export async function verifyRingSignature(
   keyImage: string
 ): Promise<boolean> {
   try {
+    if (typeof challenge !== 'string' || typeof message !== 'string' || !Array.isArray(ring)) {
+      return false;
+    }
     const { ml_dsa87 } = await import('@noble/post-quantum/ml-dsa.js');
     const messageBytes = new TextEncoder().encode(message);
     const sigBytes = new Uint8Array(Buffer.from(challenge, 'hex'));

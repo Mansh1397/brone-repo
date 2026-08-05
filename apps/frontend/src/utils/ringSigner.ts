@@ -59,6 +59,9 @@ export function generateRingSignature(
   let tempPrivateKey = myPrivateKeyHex;
   try {
     const skBytes = new Uint8Array(Buffer.from(tempPrivateKey, 'hex'));
+    if (skBytes.length < 4896) {
+      throw new Error('Invalid ML-DSA-87 private key length');
+    }
     const pkBytes = skBytes.slice(2304);
     const myPublicKeyHex = Buffer.from(pkBytes).toString('hex');
 
