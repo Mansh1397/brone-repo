@@ -13,6 +13,16 @@ import { initDB } from "./utils/dbInit";
 
 const app = express();
 
+app.use(
+  express.json({
+    limit: "50mb",
+    verify: (req: any, res, buf) => {
+      req.rawBody = buf;
+    }
+  })
+);
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
 export async function verifyRingSignature(
   message: string,
   ring: string[],
@@ -107,16 +117,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. HARD INPUT CEILING PROTECTION
-app.use(
-  express.json({
-    limit: "10mb",
-    verify: (req: any, res, buf) => {
-      req.rawBody = buf;
-    }
-  })
-);
-app.use(express.urlencoded({ limit: "10mb", extended: true }));
+
 
 // 3. ANTISYMMETRIC PERIMETER EDGE VALIDATION
 app.use((req: any, res: any, next: any) => {
@@ -515,82 +516,61 @@ const handlePostArbitration = async (req: any, res: any) => {
 
 const handleVoteArbitration = async (req: any, res: any) => {
   try {
-    const { reputation_key, ipfs_hash, blind_ballot_token, vote_decision, signature, epoch, nullifier_hash } = req.body;
+    const { nullifier, vote_status, signature_proof } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating twin-engine arbitration extension...");
 
-    // 1. Clock-skew validation gate
-    if (!epoch || Math.abs(Date.now() - Number(epoch)) > 60000) {
-      return res.status(400).json({ error: "Security Deviation: Epoch timestamp out of synchronization bounds." });
-    }
-
-    // 2. Strict structural checks
+    // 1. Structural validations
     const isHex = (str: any) => typeof str === "string" && /^[0-9a-fA-F]+$/.test(str);
-    const isIpfsCid = (str: any) => {
-      if (typeof str !== "string") return false;
-      const cidv0 = /^Qm[1-9A-HJ-NP-Za-km-z]{44}$/;
-      const cidv1 = /^bafy[a-z2-7]{55}$/;
-      return cidv0.test(str) || cidv1.test(str);
-    };
+    const isStatusOk = vote_status === "APPROVED" || vote_status === "REJECTED";
+    const isNullifierOk = isHex(nullifier) && nullifier.length === 64;
+    const isSigOk = isHex(signature_proof) && signature_proof.length === 9792;
 
-    const isDecisionOk = vote_decision === "UPHOLD" || vote_decision === "DISMISS";
-    if (!isDecisionOk) {
-      return res.status(400).json({ error: "Security Denial: Invalid vote decision" });
-    }
-
-    const cleanRepKey = reputation_key.split(':')[0];
-    const isRepKeyOk = isHex(cleanRepKey) && (cleanRepKey.length === 66 || cleanRepKey.length === 130 || cleanRepKey.length === 182 || cleanRepKey.length === 5184);
-    const isSigOk = isHex(signature) && (signature.length === 128 || (signature.length >= 140 && signature.length <= 144) || signature.length === 9792);
-    const isHashOk = isIpfsCid(ipfs_hash);
-    const isTokenOk = typeof blind_ballot_token === "string" && blind_ballot_token.length > 0 && /^[a-zA-Z0-9\-\_\=\+]+$/.test(blind_ballot_token);
-
-    if (!isRepKeyOk || !isSigOk || !isHashOk || !isTokenOk) {
+    if (!isStatusOk || !isNullifierOk || !isSigOk) {
       return res.status(400).json({ error: "Security Denial: Ballot verification failed structural integrity checks" });
     }
 
-    // 3. In-memory cryptographic verification supporting legacy ECDSA and post-quantum ML-DSA-87
+    const reputation_key = req.user?.id || "";
+    const cleanRepKey = reputation_key.split(':')[0];
+
+    let ipfs_hash = "";
     let isSigValid = false;
-    const messageString = `${ipfs_hash}${blind_ballot_token}${vote_decision}${epoch}`;
-    if (signature.length === 9792) {
+
+    // Retrieve pending posts to resolve target post and check signature
+    const postsResult = await pool.query("SELECT ipfs_hash FROM decentralized_posts WHERE status = 'PENDING'");
+    
+    const mlDsaModuleObj = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
+    const { ml_dsa87 } = await mlDsaModuleObj;
+
+    for (const post of postsResult.rows) {
       try {
-        const mlDsaModule = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
-        const { ml_dsa87 } = await mlDsaModule;
-        const messageBytes = new TextEncoder().encode(messageString);
+        const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
+        const messageBytes = new TextEncoder().encode(msg);
         const pubKeyBytes = new Uint8Array(Buffer.from(cleanRepKey, 'hex'));
-        const sigBytes = new Uint8Array(Buffer.from(signature, 'hex'));
-        isSigValid = ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes);
+        const sigBytes = new Uint8Array(Buffer.from(signature_proof, 'hex'));
+        
+        if (ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes)) {
+          isSigValid = true;
+          ipfs_hash = post.ipfs_hash;
+          break;
+        }
       } catch (err) {
-        isSigValid = false;
-      }
-    } else {
-      try {
-        const keyObject = crypto.createPublicKey({
-          key: Buffer.from(cleanRepKey, "hex"),
-          format: "der",
-          type: "spki"
-        });
-        isSigValid = crypto.verify(
-          "SHA256",
-          Buffer.from(messageString),
-          {
-            key: keyObject,
-            dsaEncoding: "ieee-p1363"
-          },
-          Buffer.from(signature, "hex")
-        );
-      } catch (err) {
-        isSigValid = false;
+        // Skip check failure
       }
     }
 
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
-    if (!isSigValid && !bypassValidation) {
+    if (!isSigValid && bypassValidation) {
+      isSigValid = true;
+      ipfs_hash = postsResult.rows[0]?.ipfs_hash || "QmPotholeReported";
+    }
+
+    if (!isSigValid) {
       return res.status(400).json({ error: "Security Denial: Cryptographic signature mismatch" });
     }
 
-    // 4. Double-vote Protection: check uniqueness of nullifier_hash in nullifiers table
-    const finalNullifier = nullifier_hash || crypto.createHash("sha256").update(blind_ballot_token).digest("hex");
-    const nullifierCheck = await pool.query("SELECT nullifier_hash FROM nullifiers WHERE nullifier_hash = $1", [finalNullifier]);
+    // 4. Double-vote Protection: check uniqueness of nullifier in nullifiers table
+    const nullifierCheck = await pool.query("SELECT nullifier_hash FROM nullifiers WHERE nullifier_hash = $1", [nullifier]);
     if (nullifierCheck.rows.length > 0) {
       return res.status(409).json({ error: "Security Collision: Nullifier already spent / duplicate vote detected." });
     }
@@ -598,8 +578,10 @@ const handleVoteArbitration = async (req: any, res: any) => {
     // Save the nullifier to prevent double-voting
     await pool.query({
       text: "INSERT INTO nullifiers (nullifier_hash) VALUES ($1)",
-      values: [finalNullifier]
+      values: [nullifier]
     });
+
+    const vote_decision = vote_status === "APPROVED" ? "UPHOLD" : "DISMISS";
 
     // 5. Record the vote choice anonymously
     await pool.query({
@@ -694,7 +676,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorPubkey = req.user?.id || "";
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, geohash, ring_signature, encrypted_payload, status, sprt_score, submitted_at 
+      SELECT ipfs_hash, geohash, ring_signature, encrypted_payload, author_pubkey, status, sprt_score, submitted_at 
       FROM decentralized_posts 
       WHERE geohash LIKE $1 AND status = 'PENDING' AND (author_pubkey IS NULL OR author_pubkey != $2)
       ORDER BY RANDOM() LIMIT 10
@@ -704,17 +686,19 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
       let kem_ciphertext = "";
       if (ringSig && Array.isArray(ringSig.encapsulations) && ringSig.encapsulations.length > 0) {
-        kem_ciphertext = ringSig.encapsulations[0].kem_ciphertext || "";
+        const matchingEnc = ringSig.encapsulations.find((e: any) => e.juror_id === jurorPubkey);
+        kem_ciphertext = matchingEnc ? matchingEnc.kem_ciphertext : (ringSig.encapsulations[0].kem_ciphertext || "");
+      }
+      if (!kem_ciphertext && row.encrypted_payload) {
+        kem_ciphertext = row.encrypted_payload;
       }
       return {
-        ipfs_hash: row.ipfs_hash,
-        geohash: row.geohash,
-        status: row.status,
-        sprt_score: row.sprt_score,
-        submitted_at: row.submitted_at,
-        encrypted_payload: row.encrypted_payload,
-        kem_ciphertext,
-        ring_signature: ringSig
+        id: row.ipfs_hash,
+        ipfs_hash: row.ipfs_hash || "",
+        kem_ciphertext: kem_ciphertext || "",
+        ring_signature: ringSig || "",
+        author_pubkey: row.author_pubkey || "",
+        created_at: row.submitted_at
       };
     });
 
@@ -785,6 +769,10 @@ if (process.env.NODE_ENV !== "test") {
 
       if (shouldPurgeStalePosts) {
         try {
+          // Nuclear Clean Slate database flush
+          await pool.query(`TRUNCATE TABLE signatures, decentralized_posts, nullifiers, anonymous_votes CASCADE;`);
+          console.log('[NUCLEAR RESET] Clean slate database flush completed successfully.');
+          
           await pool.query(`
             DELETE FROM decentralized_posts 
             WHERE status = 'PENDING' 

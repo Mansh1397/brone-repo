@@ -992,10 +992,9 @@ export const JuryDuties: React.FC = () => {
     setActionLog(`Arbitration completed: [${actionType.toUpperCase()}]`);
 
     try {
-      const { privateKey, publicKeyHex } = await getOrCreateKeyPair();
-      const epoch = Date.now();
+      const { privateKey } = await getOrCreateKeyPair();
+      const vote_status = actionType === "approve" ? "APPROVED" : "REJECTED";
       const blind_ballot_token = window.crypto.randomUUID();
-      const vote_decision = actionType === "approve" ? "UPHOLD" : "DISMISS";
       let ipfs_hash: string | null = targetItem.ipfs_hash;
 
       // 1. Fetch decoy ring from the network
@@ -1005,25 +1004,21 @@ export const JuryDuties: React.FC = () => {
       let privKeyHex: string | null = await getPrivateKeyHex(privateKey);
 
       // 3. Generate Nullifier Hash
-      const nullifier_hash = crypto.createHash("sha256").update(blind_ballot_token).digest("hex");
+      const nullifier = crypto.createHash("sha256").update(blind_ballot_token).digest("hex");
 
       // 4. Generate Ring Signature over message
-      const messageToSign = `${ipfs_hash}|${nullifier_hash}|${vote_decision}`;
+      const messageToSign = `${ipfs_hash}|${nullifier}|${vote_status}`;
       const ringSig = generateRingSignature(messageToSign, privKeyHex, decoyRing);
 
       // 5. Network jitter (500ms - 2500ms) to defeat packet timing analysis
       const jitterDelay = Math.floor(Math.random() * 2000) + 500;
       await new Promise((resolve) => setTimeout(resolve, jitterDelay));
 
-      // 6. Dispatch vote POST omitting credentials
+      // 6. Dispatch vote POST omitting credentials and only sending minimal proof
       await apiClient.post("arbitration/vote", {
-        reputation_key: publicKeyHex,
-        ipfs_hash,
-        blind_ballot_token,
-        vote_decision,
-        signature: ringSig.challenge,
-        epoch,
-        nullifier_hash
+        nullifier,
+        vote_status,
+        signature_proof: ringSig.challenge
       }, {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
