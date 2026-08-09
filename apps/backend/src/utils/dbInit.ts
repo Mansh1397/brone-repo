@@ -13,14 +13,16 @@ export async function initDB(): Promise<void> {
         geohash VARCHAR(20) NOT NULL,
         ring_signature TEXT NOT NULL,
         encrypted_payload TEXT,
+        author_pubkey TEXT,
         status VARCHAR(50) DEFAULT 'PENDING' NOT NULL,
         sprt_score NUMERIC(10, 4) DEFAULT 0.0000 NOT NULL,
         submitted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    // Alter table to add encrypted_payload if it exists in legacy databases
+    // Alter table to add encrypted_payload and author_pubkey if they exist in legacy databases
     await pool.query(`ALTER TABLE decentralized_posts ADD COLUMN IF NOT EXISTS encrypted_payload TEXT;`).catch(() => {});
+    await pool.query(`ALTER TABLE decentralized_posts ADD COLUMN IF NOT EXISTS author_pubkey TEXT;`).catch(() => {});
 
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_posts_geohash ON decentralized_posts(geohash);

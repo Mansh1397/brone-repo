@@ -389,13 +389,14 @@ const mockEncryptedData: Record<string, string> = {};
 
 const handleGetArbitration = async (req: any, res: any) => {
   try {
+    const jurorPubkey = req.user?.id || "";
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
       SELECT ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at 
       FROM decentralized_posts 
-      WHERE geohash LIKE $1 AND status = 'PENDING' 
+      WHERE geohash LIKE $1 AND status = 'PENDING' AND (author_pubkey IS NULL OR author_pubkey != $2)
       ORDER BY RANDOM() LIMIT 10
-    `, [geohashFilter]);
+    `, [geohashFilter, jurorPubkey]);
 
     const posts = result.rows.map((row: any) => ({
       ...row,
@@ -491,13 +492,14 @@ const handlePostArbitration = async (req: any, res: any) => {
 
     // 6. Insert post into decentralized_posts
     const safeGeohash = geohash.substring(0, 20);
+    const authorPubkey = req.user?.id || "";
     await pool.query({
       text: `
-        INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, encrypted_payload, status, sprt_score, submitted_at)
-        VALUES ($1, $2, $3, $4, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
-        ON CONFLICT (ipfs_hash) DO UPDATE SET encrypted_payload = EXCLUDED.encrypted_payload;
+        INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, encrypted_payload, author_pubkey, status, sprt_score, submitted_at)
+        VALUES ($1, $2, $3, $4, $5, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
+        ON CONFLICT (ipfs_hash) DO UPDATE SET encrypted_payload = EXCLUDED.encrypted_payload, author_pubkey = EXCLUDED.author_pubkey;
       `,
-      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), encrypted_payload]
+      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), encrypted_payload, authorPubkey]
     });
 
     return res.status(201).json({
@@ -689,13 +691,14 @@ const handleIPFSExtraction = async (req: any, res: any) => {
 
 const handleGetArbitrationTasks = async (req: any, res: any) => {
   try {
+    const jurorPubkey = req.user?.id || "";
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
       SELECT ipfs_hash, geohash, ring_signature, encrypted_payload, status, sprt_score, submitted_at 
       FROM decentralized_posts 
-      WHERE geohash LIKE $1 AND status = 'PENDING' 
+      WHERE geohash LIKE $1 AND status = 'PENDING' AND (author_pubkey IS NULL OR author_pubkey != $2)
       ORDER BY RANDOM() LIMIT 10
-    `, [geohashFilter]);
+    `, [geohashFilter, jurorPubkey]);
 
     const posts = result.rows.map((row: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
