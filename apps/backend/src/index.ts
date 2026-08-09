@@ -516,6 +516,9 @@ const handlePostArbitration = async (req: any, res: any) => {
 
 const handleVoteArbitration = async (req: any, res: any) => {
   try {
+    console.log("[VOTE INCOMING RAW BODY]:", req.body);
+    console.log("[VOTE INCOMING HEADERS]:", req.headers);
+
     const { nullifier, vote_status, signature_proof } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating twin-engine arbitration extension...");
@@ -526,8 +529,20 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const isNullifierOk = isHex(nullifier) && nullifier.length === 64;
     const isSigOk = isHex(signature_proof) && (signature_proof.length === 128 || (signature_proof.length >= 140 && signature_proof.length <= 144) || signature_proof.length === 9792);
 
+    if (!nullifier || !vote_status || !signature_proof) {
+      console.error("[VOTE REJECTED] Missing fields. nullifier:", !!nullifier, "vote_status:", !!vote_status, "signature_proof:", !!signature_proof);
+      return res.status(400).json({ error: "Missing required fields", bodyReceived: req.body });
+    }
+
     if (!isStatusOk || !isNullifierOk || !isSigOk) {
-      return res.status(400).json({ error: "Security Denial: Ballot verification failed structural integrity checks" });
+      console.error("[VOTE REJECTED] Structural integrity check failed. isStatusOk:", isStatusOk, "isNullifierOk:", isNullifierOk, "isSigOk:", isSigOk);
+      return res.status(400).json({
+        error: "Ballot verification failed structural integrity checks",
+        isStatusOk,
+        isNullifierOk,
+        isSigOk,
+        bodyReceived: req.body
+      });
     }
 
     const reputation_key = req.user?.id || "";

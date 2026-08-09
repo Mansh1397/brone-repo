@@ -1045,6 +1045,7 @@ export const JuryDuties: React.FC = () => {
         signature_proof: ringSig.challenge
       }, {
         headers: {
+          "Content-Type": "application/json",
           "Cache-Control": "no-store, no-cache, must-revalidate",
         },
         withCredentials: false
