@@ -516,7 +516,7 @@ const handlePostArbitration = async (req: any, res: any) => {
 
 const handleVoteArbitration = async (req: any, res: any) => {
   try {
-    const { nullifier, vote_status, signature_proof } = req.body;
+    const { ipfs_hash: reqIpfsHash, nullifier, vote_status, signature_proof } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating twin-engine arbitration extension...");
 
@@ -524,7 +524,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const isHex = (str: any) => typeof str === "string" && /^[0-9a-fA-F]+$/.test(str);
     const isStatusOk = vote_status === "APPROVED" || vote_status === "REJECTED";
     const isNullifierOk = isHex(nullifier) && nullifier.length === 64;
-    const isSigOk = isHex(signature_proof) && signature_proof.length === 9792;
+    const isSigOk = isHex(signature_proof) && (signature_proof.length === 128 || (signature_proof.length >= 140 && signature_proof.length <= 144) || signature_proof.length === 9792);
 
     if (!isStatusOk || !isNullifierOk || !isSigOk) {
       return res.status(400).json({ error: "Security Denial: Ballot verification failed structural integrity checks" });
@@ -533,7 +533,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const reputation_key = req.user?.id || "";
     const cleanRepKey = reputation_key.split(':')[0];
 
-    let ipfs_hash = "";
+    let ipfs_hash = reqIpfsHash || "";
     let isSigValid = false;
 
     // Retrieve pending posts to resolve target post and check signature
@@ -542,27 +542,60 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const mlDsaModuleObj = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
     const { ml_dsa87 } = await mlDsaModuleObj;
 
+    // Loop through all pending posts to find matching post if it verifies
     for (const post of postsResult.rows) {
-      try {
-        const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
-        const messageBytes = new TextEncoder().encode(msg);
-        const pubKeyBytes = new Uint8Array(Buffer.from(cleanRepKey, 'hex'));
-        const sigBytes = new Uint8Array(Buffer.from(signature_proof, 'hex'));
-        
-        if (ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes)) {
-          isSigValid = true;
-          ipfs_hash = post.ipfs_hash;
-          break;
+      // If client supplied ipfs_hash, prioritize matching that specific one
+      if (reqIpfsHash && post.ipfs_hash !== reqIpfsHash) {
+        continue;
+      }
+      
+      if (signature_proof.length === 9792) {
+        try {
+          const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
+          const messageBytes = new TextEncoder().encode(msg);
+          const pubKeyBytes = new Uint8Array(Buffer.from(cleanRepKey, 'hex'));
+          const sigBytes = new Uint8Array(Buffer.from(signature_proof, 'hex'));
+          
+          if (ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes)) {
+            isSigValid = true;
+            ipfs_hash = post.ipfs_hash;
+            break;
+          }
+        } catch (err) {
+          // Skip
         }
-      } catch (err) {
-        // Skip check failure
+      } else {
+        try {
+          const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
+          const keyObject = crypto.createPublicKey({
+            key: Buffer.from(cleanRepKey, "hex"),
+            format: "der",
+            type: "spki"
+          });
+          const ok = crypto.verify(
+            "SHA256",
+            Buffer.from(msg),
+            {
+              key: keyObject,
+              dsaEncoding: "ieee-p1363"
+            },
+            Buffer.from(signature_proof, "hex")
+          );
+          if (ok) {
+            isSigValid = true;
+            ipfs_hash = post.ipfs_hash;
+            break;
+          }
+        } catch (err) {
+          // Skip
+        }
       }
     }
 
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
     if (!isSigValid && bypassValidation) {
       isSigValid = true;
-      ipfs_hash = postsResult.rows[0]?.ipfs_hash || "QmPotholeReported";
+      ipfs_hash = reqIpfsHash || postsResult.rows[0]?.ipfs_hash || "QmPotholeReported";
     }
 
     if (!isSigValid) {

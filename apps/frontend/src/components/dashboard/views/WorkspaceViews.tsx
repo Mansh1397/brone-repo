@@ -212,7 +212,7 @@ const decryptPayloadForJuror = async (
 };
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
-const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string }> = ({ ipfsHash, fallbackText }) => {
+const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?: any }> = ({ ipfsHash, fallbackText, task }) => {
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -220,6 +220,18 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string }> = (
     let active = true;
     const fetchAndDecrypt = async () => {
       try {
+        if (task) {
+          const payload = task.encrypted_payload;
+          if (payload && payload.startsWith("ENC_GCM:")) {
+            const myKeys = await getOrCreateKeyPair();
+            const decrypted = await decryptPayloadForJuror(payload, task.ring_signature, myKeys);
+            if (active) setText(decrypted);
+          } else {
+            if (active) setText(payload || fallbackText || "Payload Encrypted - Missing Shard Credentials");
+          }
+          return;
+        }
+
         const response = await apiClient.get(`posts/extract?ipfs_hash=${ipfsHash}`);
         const payload = response.data.encrypted_payload;
         if (payload && payload.startsWith("ENC_GCM:")) {
@@ -239,7 +251,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string }> = (
     return () => {
       active = false;
     };
-  }, [ipfsHash, fallbackText]);
+  }, [ipfsHash, fallbackText, task]);
 
   if (loading) {
     return <span className="animate-pulse text-gray-500 font-mono text-xs">Decrypting vault payload...</span>;
@@ -926,6 +938,8 @@ export const ReportingHub: React.FC = () => {
 interface ArbitrationItem {
   ipfs_hash: string;
   keyHash: string;
+  encrypted_payload?: string;
+  ring_signature?: any;
 }
 
 export const JuryDuties: React.FC = () => {
@@ -943,13 +957,15 @@ export const JuryDuties: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await apiClient.get("arbitration", {
+        const response = await apiClient.get("arbitration/tasks", {
           signal: abortController.signal,
           cache: "no-store",
           headers: {
             "Cache-Control": "no-store, no-cache, must-revalidate",
           },
         } as any);
+
+        console.log("RAW JURY TASKS:", response.data);
 
         const rawItems = Array.isArray(response.data) ? response.data : [];
 
@@ -958,7 +974,12 @@ export const JuryDuties: React.FC = () => {
           const ipfs_hash = item.ipfs_hash || "QmPotholeReported";
           const salt = Math.random().toString(36).substring(2, 9);
           const keyHash = `arb_${ipfs_hash}_${salt}`;
-          return { ipfs_hash, keyHash };
+          return {
+            ipfs_hash,
+            keyHash,
+            encrypted_payload: item.kem_ciphertext || item.encrypted_payload || "",
+            ring_signature: item.ring_signature
+          };
         });
 
         setItems(hydrated);
@@ -1016,6 +1037,7 @@ export const JuryDuties: React.FC = () => {
 
       // 6. Dispatch vote POST omitting credentials and only sending minimal proof
       await apiClient.post("arbitration/vote", {
+        ipfs_hash,
         nullifier,
         vote_status,
         signature_proof: ringSig.challenge
@@ -1117,7 +1139,7 @@ export const JuryDuties: React.FC = () => {
               >
                 {/* BODY TEXT BLOCK ONLY (Absolute Anonymity Invariant) */}
                 <p className="text-gray-300 text-sm font-mono leading-relaxed bg-[#0B0F19] p-4 rounded-lg border border-[#1F2937] select-none">
-                  <PostDescription ipfsHash={item.ipfs_hash} />
+                  <PostDescription ipfsHash={item.ipfs_hash} task={item} />
                 </p>
 
                 {/* SPLIT TACTICAL PANEL BUTTON ROW */}
