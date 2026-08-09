@@ -519,7 +519,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     console.log("[VOTE INCOMING RAW BODY]:", req.body);
     console.log("[VOTE INCOMING HEADERS]:", req.headers);
 
-    const { nullifier, vote_status, signature_proof } = req.body;
+    let { ipfs_hash, nullifier, vote_status, signature_proof } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating twin-engine arbitration extension...");
 
@@ -548,7 +548,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const reputation_key = req.user?.id || "";
     const cleanRepKey = reputation_key.split(':')[0];
 
-    let ipfs_hash = "";
+    ipfs_hash = ipfs_hash || "";
     let isSigValid = false;
 
     // Retrieve pending posts to resolve target post and check signature
@@ -620,8 +620,8 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
     // Save the nullifier to prevent double-voting
     await pool.query({
-      text: "INSERT INTO nullifiers (nullifier_hash) VALUES ($1)",
-      values: [nullifier]
+      text: "INSERT INTO nullifiers (nullifier_hash, target_ipfs_hash) VALUES ($1, $2)",
+      values: [nullifier, ipfs_hash]
     });
 
     const vote_decision = vote_status === "APPROVED" ? "UPHOLD" : "DISMISS";
