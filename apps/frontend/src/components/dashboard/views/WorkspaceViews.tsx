@@ -1023,8 +1023,7 @@ export const JuryDuties: React.FC = () => {
         vote_decision,
         signature: ringSig.challenge,
         epoch,
-        nullifier_hash,
-        ring_signature: ringSig
+        nullifier_hash
       }, {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",

@@ -110,12 +110,13 @@ app.use((req, res, next) => {
 // 2. HARD INPUT CEILING PROTECTION
 app.use(
   express.json({
-    limit: "50kb",
+    limit: "10mb",
     verify: (req: any, res, buf) => {
       req.rawBody = buf;
     }
   })
 );
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 // 3. ANTISYMMETRIC PERIMETER EDGE VALIDATION
 app.use((req: any, res: any, next: any) => {
@@ -535,8 +536,9 @@ const handleVoteArbitration = async (req: any, res: any) => {
       return res.status(400).json({ error: "Security Denial: Invalid vote decision" });
     }
 
-    const isRepKeyOk = isHex(reputation_key) && (reputation_key.length === 66 || reputation_key.length === 130 || reputation_key.length === 182);
-    const isSigOk = isHex(signature) && (signature.length === 128 || (signature.length >= 140 && signature.length <= 144));
+    const cleanRepKey = reputation_key.split(':')[0];
+    const isRepKeyOk = isHex(cleanRepKey) && (cleanRepKey.length === 66 || cleanRepKey.length === 130 || cleanRepKey.length === 182 || cleanRepKey.length === 5184);
+    const isSigOk = isHex(signature) && (signature.length === 128 || (signature.length >= 140 && signature.length <= 144) || signature.length === 9792);
     const isHashOk = isIpfsCid(ipfs_hash);
     const isTokenOk = typeof blind_ballot_token === "string" && blind_ballot_token.length > 0 && /^[a-zA-Z0-9\-\_\=\+]+$/.test(blind_ballot_token);
 
@@ -544,26 +546,39 @@ const handleVoteArbitration = async (req: any, res: any) => {
       return res.status(400).json({ error: "Security Denial: Ballot verification failed structural integrity checks" });
     }
 
-    // 3. In-memory cryptographic verification using native crypto KeyObject import
+    // 3. In-memory cryptographic verification supporting legacy ECDSA and post-quantum ML-DSA-87
     let isSigValid = false;
     const messageString = `${ipfs_hash}${blind_ballot_token}${vote_decision}${epoch}`;
-    try {
-      const keyObject = crypto.createPublicKey({
-        key: Buffer.from(reputation_key, "hex"),
-        format: "der",
-        type: "spki"
-      });
-      isSigValid = crypto.verify(
-        "SHA256",
-        Buffer.from(messageString),
-        {
-          key: keyObject,
-          dsaEncoding: "ieee-p1363"
-        },
-        Buffer.from(signature, "hex")
-      );
-    } catch (err) {
-      isSigValid = false;
+    if (signature.length === 9792) {
+      try {
+        const mlDsaModule = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
+        const { ml_dsa87 } = await mlDsaModule;
+        const messageBytes = new TextEncoder().encode(messageString);
+        const pubKeyBytes = new Uint8Array(Buffer.from(cleanRepKey, 'hex'));
+        const sigBytes = new Uint8Array(Buffer.from(signature, 'hex'));
+        isSigValid = ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes);
+      } catch (err) {
+        isSigValid = false;
+      }
+    } else {
+      try {
+        const keyObject = crypto.createPublicKey({
+          key: Buffer.from(cleanRepKey, "hex"),
+          format: "der",
+          type: "spki"
+        });
+        isSigValid = crypto.verify(
+          "SHA256",
+          Buffer.from(messageString),
+          {
+            key: keyObject,
+            dsaEncoding: "ieee-p1363"
+          },
+          Buffer.from(signature, "hex")
+        );
+      } catch (err) {
+        isSigValid = false;
+      }
     }
 
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
@@ -672,7 +687,43 @@ const handleIPFSExtraction = async (req: any, res: any) => {
   }
 };
 
+const handleGetArbitrationTasks = async (req: any, res: any) => {
+  try {
+    const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
+    const result = await pool.query(`
+      SELECT ipfs_hash, geohash, ring_signature, encrypted_payload, status, sprt_score, submitted_at 
+      FROM decentralized_posts 
+      WHERE geohash LIKE $1 AND status = 'PENDING' 
+      ORDER BY RANDOM() LIMIT 10
+    `, [geohashFilter]);
+
+    const posts = result.rows.map((row: any) => {
+      const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
+      let kem_ciphertext = "";
+      if (ringSig && Array.isArray(ringSig.encapsulations) && ringSig.encapsulations.length > 0) {
+        kem_ciphertext = ringSig.encapsulations[0].kem_ciphertext || "";
+      }
+      return {
+        ipfs_hash: row.ipfs_hash,
+        geohash: row.geohash,
+        status: row.status,
+        sprt_score: row.sprt_score,
+        submitted_at: row.submitted_at,
+        encrypted_payload: row.encrypted_payload,
+        kem_ciphertext,
+        ring_signature: ringSig
+      };
+    });
+
+    return res.status(200).json(posts);
+  } catch (error) {
+    console.error("[ARBITRATION ERROR] Failed to fetch arbitration tasks:", error);
+    return res.status(200).json([]);
+  }
+};
+
 v1Router.get("/arbitration", requireAuth, handleGetArbitration);
+v1Router.get("/arbitration/tasks", requireAuth, handleGetArbitrationTasks);
 v1Router.post("/arbitration", requireAuth, handlePostArbitration);
 v1Router.post("/arbitration/vote", requireAuth, handleVoteArbitration);
 

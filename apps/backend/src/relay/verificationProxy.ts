@@ -382,14 +382,17 @@ app.get("/tasks/:taskId", (req: Request, res: Response) => {
 
   return res.status(200).json({
     taskId: envelope.taskId,
+    ipfs_hash: envelope.taskId,
     encrypted_payload: envelope.encrypted_payload,
+    kem_ciphertext: matchingEncapsulation ? matchingEncapsulation.kem_ciphertext : "",
     ring_signature: {
       message: envelope.ring_signature.message,
       ring: envelope.ring_signature.ring,
       challenge: envelope.ring_signature.challenge,
       responses: envelope.ring_signature.responses,
       keyImage: envelope.ring_signature.keyImage,
-      encapsulation: matchingEncapsulation
+      encapsulation: matchingEncapsulation,
+      encapsulations: [matchingEncapsulation]
     }
   });
 });
