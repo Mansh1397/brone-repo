@@ -939,6 +939,7 @@ interface ArbitrationItem {
   ipfs_hash: string;
   keyHash: string;
   encrypted_payload?: string;
+  kem_ciphertext?: string;
   ring_signature?: any;
 }
 
@@ -977,7 +978,8 @@ export const JuryDuties: React.FC = () => {
           return {
             ipfs_hash,
             keyHash,
-            encrypted_payload: item.kem_ciphertext || item.encrypted_payload || "",
+            encrypted_payload: item.encrypted_payload || "",
+            kem_ciphertext: item.kem_ciphertext || "",
             ring_signature: item.ring_signature
           };
         });

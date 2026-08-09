@@ -516,7 +516,7 @@ const handlePostArbitration = async (req: any, res: any) => {
 
 const handleVoteArbitration = async (req: any, res: any) => {
   try {
-    const { ipfs_hash: reqIpfsHash, nullifier, vote_status, signature_proof } = req.body;
+    const { nullifier, vote_status, signature_proof } = req.body;
 
     console.log("[AGENT MANAGER]: Initiating twin-engine arbitration extension...");
 
@@ -533,7 +533,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const reputation_key = req.user?.id || "";
     const cleanRepKey = reputation_key.split(':')[0];
 
-    let ipfs_hash = reqIpfsHash || "";
+    let ipfs_hash = "";
     let isSigValid = false;
 
     // Retrieve pending posts to resolve target post and check signature
@@ -544,11 +544,6 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
     // Loop through all pending posts to find matching post if it verifies
     for (const post of postsResult.rows) {
-      // If client supplied ipfs_hash, prioritize matching that specific one
-      if (reqIpfsHash && post.ipfs_hash !== reqIpfsHash) {
-        continue;
-      }
-      
       if (signature_proof.length === 9792) {
         try {
           const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
@@ -595,7 +590,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
     if (!isSigValid && bypassValidation) {
       isSigValid = true;
-      ipfs_hash = reqIpfsHash || postsResult.rows[0]?.ipfs_hash || "QmPotholeReported";
+      ipfs_hash = postsResult.rows[0]?.ipfs_hash || "QmPotholeReported";
     }
 
     if (!isSigValid) {
@@ -722,13 +717,11 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
         const matchingEnc = ringSig.encapsulations.find((e: any) => e.juror_id === jurorPubkey);
         kem_ciphertext = matchingEnc ? matchingEnc.kem_ciphertext : (ringSig.encapsulations[0].kem_ciphertext || "");
       }
-      if (!kem_ciphertext && row.encrypted_payload) {
-        kem_ciphertext = row.encrypted_payload;
-      }
       return {
         id: row.ipfs_hash,
         ipfs_hash: row.ipfs_hash || "",
         kem_ciphertext: kem_ciphertext || "",
+        encrypted_payload: row.encrypted_payload || "",
         ring_signature: ringSig || "",
         author_pubkey: row.author_pubkey || "",
         created_at: row.submitted_at
