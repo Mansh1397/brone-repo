@@ -527,7 +527,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const isHex = (str: any) => typeof str === "string" && /^[0-9a-fA-F]+$/.test(str);
     const isStatusOk = vote_status === "APPROVED" || vote_status === "REJECTED";
     const isNullifierOk = isHex(nullifier) && nullifier.length === 64;
-    const isSigOk = isHex(signature_proof) && (signature_proof.length === 128 || (signature_proof.length >= 140 && signature_proof.length <= 144) || signature_proof.length === 9792);
+    const isSigOk = typeof signature_proof === 'string' && signature_proof.length > 0;
 
     if (!nullifier || !vote_status || !signature_proof) {
       console.error("[VOTE REJECTED] Missing fields. nullifier:", !!nullifier, "vote_status:", !!vote_status, "signature_proof:", !!signature_proof);
