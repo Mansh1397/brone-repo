@@ -913,7 +913,8 @@ export const ReportingHub: React.FC = () => {
         ipfs_hash: contentCID,
         geohash: geohashVal,
         ring_signature: ringSig,
-        encrypted_payload: encryptedPayload
+        encrypted_payload: encryptedPayload,
+        encapsulations: encapsulations
       }, {
         headers: {
           "Cache-Control": "no-store, no-cache, must-revalidate",
