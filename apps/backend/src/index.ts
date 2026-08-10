@@ -839,6 +839,9 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       return {
         id: row.ipfs_hash,
         ipfs_hash: row.ipfs_hash || "",
+        hasKem: !!kem_ciphertext,
+        hasPayload: !!row.encrypted_payload,
+        hasWrappedKey: !!wrapped_key,
         kem_ciphertext: kem_ciphertext || row.kem_ciphertext || row.encapsulation || "",
         wrapped_key: wrapped_key || row.wrapped_key || "",
         encrypted_payload: row.encrypted_payload || "",
@@ -848,7 +851,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       };
     }));
 
-    console.warn("[OUTGOING JURY TASKS]:", posts.map(t => ({ id: t.ipfs_hash, hasKem: !!t.kem_ciphertext, hasPayload: !!t.encrypted_payload })));
+    console.warn("[OUTGOING JURY TASKS]:", posts.map(t => ({ id: t.ipfs_hash, hasKem: t.hasKem, hasWrappedKey: t.hasWrappedKey, hasPayload: t.hasPayload })));
 
     return res.status(200).json(posts);
   } catch (error) {
