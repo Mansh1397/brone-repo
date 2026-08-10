@@ -18,11 +18,15 @@ import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 // @ts-ignore
 import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 
-const hexToUint8Array = (hexString: string): Uint8Array => {
-  if (!hexString) return new Uint8Array();
-  const cleanHex = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
-  const matches = cleanHex.match(/.{1,2}/g);
-  return new Uint8Array((matches || []).map(byte => parseInt(byte, 16)));
+const hexToBytes = (hex: string): Uint8Array => {
+  if (!hex) return new Uint8Array();
+  // Remove 'ENC_GCM:' or '0x' prefixes if they exist
+  const cleanHex = hex.replace(/^(ENC_GCM:|0x)/, '');
+  const bytes = new Uint8Array(Math.ceil(cleanHex.length / 2));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
 };
 
 const uint8ArrayToHex = (arr: Uint8Array): string => {
@@ -202,8 +206,8 @@ const decryptPayloadForJuror = async (
 
     if (match && typeof match.kem_ciphertext === 'string' && typeof match.wrapped_key === 'string') {
       try {
-        const kemCiphertextBytes = hexToUint8Array(match.kem_ciphertext);
-        const wrappedKeyBytes = hexToUint8Array(match.wrapped_key);
+        const kemCiphertextBytes = hexToBytes(match.kem_ciphertext);
+        const wrappedKeyBytes = hexToBytes(match.wrapped_key);
 
         const sharedSecret = ml_kem1024.decapsulate(kemCiphertextBytes, myKeys.kemPrivateKey);
 
@@ -429,8 +433,8 @@ const getOrCreateKeyPair = async (): Promise<{
 
   const stored = await loadAndDecryptState();
   if (stored && stored.pqDsaPrivateKeyHex && stored.pqKemPrivateKeyHex && stored.pqPublicKeyHex) {
-    const dsaPrivateKey = hexToUint8Array(stored.pqDsaPrivateKeyHex);
-    const kemPrivateKey = hexToUint8Array(stored.pqKemPrivateKeyHex);
+    const dsaPrivateKey = hexToBytes(stored.pqDsaPrivateKeyHex);
+    const kemPrivateKey = hexToBytes(stored.pqKemPrivateKeyHex);
     if (dsaPrivateKey.length === 4896 && kemPrivateKey.length === 3168) {
       const keypairObj = {
         privateKey: dsaPrivateKey,
@@ -917,7 +921,7 @@ export const ReportingHub: React.FC = () => {
           }
         }
         try {
-          const jurorPubKeyBytes = hexToUint8Array(kemPubHex);
+          const jurorPubKeyBytes = hexToBytes(kemPubHex);
           const { cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
           const wrappedKey = new Uint8Array(32);
           for (let j = 0; j < 32; j++) {
