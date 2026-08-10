@@ -9,7 +9,7 @@ import {
   RSAPublicKey
 } from "@brone/crypto-core";
 import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
-import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState } from "../../../utils/storage";
+import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState, decryptStoragePayload } from "../../../utils/storage";
 import { uploadToIPFS } from "../../../utils/ipfsService";
 import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
 import crypto from "crypto";
@@ -80,38 +80,69 @@ const encryptPayload = async (text: string): Promise<string> => {
 };
 
 // 3. Decrypt ciphertext payload using local storage key (AES-GCM)
-const decryptPostWithStorageKey = async (encryptedStr: string): Promise<string> => {
-  if (!encryptedStr.startsWith("ENC_GCM:")) {
-    throw new Error("Invalid payload format");
+const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: Uint8Array | string): Promise<string> => {
+  try {
+    // 1. Ensure Local Private Key is Bytes
+    let privKeyBytes: Uint8Array;
+    if (typeof localPrivateKeyRaw === 'string') {
+      privKeyBytes = hexToBytes(localPrivateKeyRaw);
+    } else {
+      privKeyBytes = localPrivateKeyRaw;
+    }
+
+    // 2. Decode Network Hex Strings to Raw Bytes
+    const kemBytes = hexToBytes(task.kem_ciphertext);
+    const wrappedKeyBytes = hexToBytes(task.wrapped_key);
+    const payloadBytes = decodePayloadBytes(task.encrypted_payload);
+
+    if (kemBytes.length === 0 || wrappedKeyBytes.length === 0 || payloadBytes.length === 0) {
+      throw new Error(`Missing or empty network payload bytes. KEM: ${kemBytes.length}, Wrap: ${wrappedKeyBytes.length}, Payload: ${payloadBytes.length}`);
+    }
+
+    // 3. Decapsulate ML-KEM
+    const mlKem = ml_kem1024;
+    const sharedSecretBytes = mlKem.decapsulate(kemBytes, privKeyBytes); 
+    
+    if (!sharedSecretBytes || sharedSecretBytes.length === 0) {
+      throw new Error("ML-KEM decapsulation returned empty secret.");
+    }
+
+    // 4. Import Wrapping Key (AES-KW)
+    const wrappingKey = await crypto.subtle.importKey(
+      "raw", 
+      sharedSecretBytes, 
+      "AES-KW", 
+      false, 
+      ["unwrapKey"]
+    );
+
+    // 5. Unwrap the AES-GCM Key
+    const unwrappedAesKey = await crypto.subtle.unwrapKey(
+      "raw", 
+      wrappedKeyBytes, 
+      wrappingKey, 
+      "AES-KW", 
+      { name: "AES-GCM", length: 256 }, 
+      false, 
+      ["decrypt"]
+    );
+
+    // 6. Decrypt the Final Payload (Slice the 12-byte IV)
+    const iv = payloadBytes.slice(0, 12);
+    const ciphertext = payloadBytes.slice(12);
+    
+    const decryptedBuffer = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      unwrappedAesKey,
+      ciphertext
+    );
+
+    return new TextDecoder().decode(decryptedBuffer);
+
+  } catch (err: any) {
+    console.error("🚨 POST DECRYPTION CRASH 🚨", err);
+    throw new Error(`decryptPostWithStorageKey failed: ${err.message || err.name || 'OperationError'} \nStack: ${err.stack || 'N/A'}`);
   }
-  const base64 = encryptedStr.substring(8);
-
-  // Base64 decode to Uint8Array
-  const binaryString = window.atob(base64);
-  const len = binaryString.length;
-  const combinedBytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    combinedBytes[i] = binaryString.charCodeAt(i);
-  }
-
-  if (combinedBytes.length < 12) {
-    throw new Error("Insufficient payload length");
-  }
-  const iv = combinedBytes.slice(0, 12);
-  const ciphertext = combinedBytes.slice(12);
-
-  const key = await getOrCreateStorageKey();
-
-  const plaintextBuffer = await window.crypto.subtle.decrypt(
-    {
-      name: "AES-GCM",
-      iv: iv,
-    },
-    key,
-    ciphertext
-  );
-
-  return new TextDecoder().decode(plaintextBuffer);
 };
 
 const decodePayloadBytes = (payloadStr: string): Uint8Array => {
@@ -331,7 +362,7 @@ const decryptPayloadForJuror = async (
           wrapped_key: match.wrapped_key,
           encrypted_payload: encryptedStr
         };
-        return await decryptPayload(task, myKeys.kemPrivateKey);
+        return await decryptPostWithStorageKey(task, myKeys.kemPrivateKey);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
         const errorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -345,7 +376,9 @@ const decryptPayloadForJuror = async (
     }
   }
 
-  return await decryptPostWithStorageKey(encryptedStr);
+  const key = await getOrCreateStorageKey();
+  const decryptedBytes = await decryptStoragePayload(encryptedStr, key);
+  return new TextDecoder().decode(decryptedBytes);
 };
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
