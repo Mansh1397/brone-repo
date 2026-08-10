@@ -121,6 +121,25 @@ export async function initDB(): Promise<void> {
       }
     }
 
+    // Table 7: post_encapsulations
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS post_encapsulations (
+        id SERIAL PRIMARY KEY,
+        ipfs_hash VARCHAR(255) NOT NULL REFERENCES decentralized_posts(ipfs_hash) ON DELETE CASCADE,
+        juror_pubkey TEXT NOT NULL,
+        kem_ciphertext TEXT NOT NULL,
+        wrapped_key TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_post_encapsulations_ipfs_hash ON post_encapsulations(ipfs_hash);
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_post_encapsulations_juror_pubkey ON post_encapsulations(juror_pubkey);
+    `);
+
     console.log('[DB] Zero-Knowledge schema verified.');
   } catch (error: any) {
     console.error("[DB FATAL] Database initialization/migration failed:", error.message || error);

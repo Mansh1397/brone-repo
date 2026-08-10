@@ -413,6 +413,12 @@ const handleGetArbitration = async (req: any, res: any) => {
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
+    console.warn("[POST CREATION INCOMING]:", {
+      hasEncryptedPayload: !!req.body.encrypted_payload,
+      kemKeysType: typeof req.body.kem_ciphertext || typeof req.body.encapsulations,
+      kemKeysKeys: Object.keys(req.body).filter(k => k.includes('kem') || k.includes('encap') || k.includes('key'))
+    });
+
     const { ipfs_hash, geohash, ring_signature } = req.body;
     const payload = req.body.encrypted_payload || req.body.payload || '';
 
@@ -515,6 +521,23 @@ const handlePostArbitration = async (req: any, res: any) => {
       `,
       values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), payload, authorPubkey]
     });
+
+    // 7. Insert KEM encapsulations into post_encapsulations for relational querying
+    const encapsList = ring_signature.encapsulations || [];
+    if (Array.isArray(encapsList)) {
+      for (const enc of encapsList) {
+        if (enc.juror_id && (enc.kem_ciphertext || enc.ciphertext) && enc.wrapped_key) {
+          const kemCipher = enc.kem_ciphertext || enc.ciphertext;
+          await pool.query({
+            text: `
+              INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key)
+              VALUES ($1, $2, $3, $4);
+            `,
+            values: [ipfs_hash, enc.juror_id, kemCipher, enc.wrapped_key]
+          });
+        }
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -738,27 +761,28 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
 
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, geohash, ring_signature, encrypted_payload, author_pubkey, status, sprt_score, submitted_at 
-      FROM decentralized_posts 
-      WHERE geohash LIKE $1 AND status = 'PENDING' AND (author_pubkey IS NULL OR author_pubkey != $2)
+      SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext
+      FROM decentralized_posts dp
+      LEFT JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND pe.juror_pubkey = $3
+      WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)
       ORDER BY RANDOM() LIMIT 10
-    `, [geohashFilter, jurorPubkey]);
+    `, [geohashFilter, jurorPubkey, jurorId]);
 
     const posts = result.rows.map((row: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
-      let kem_ciphertext = "";
+      let kem_ciphertext = row.kem_ciphertext || "";
 
-      const encapsulations = row.encapsulations || row.keys || ringSig?.encapsulations || ringSig?.keys || [];
+      if (!kem_ciphertext) {
+        const encapsulations = row.encapsulations || row.keys || ringSig?.encapsulations || ringSig?.keys || [];
 
-      if (Array.isArray(encapsulations) && encapsulations.length > 0) {
-        const matchingEnc = encapsulations.find((e: any) => e.juror_id === jurorId);
-        kem_ciphertext = matchingEnc 
-          ? (matchingEnc.kem_ciphertext || matchingEnc.ciphertext || "") 
-          : (encapsulations[0].kem_ciphertext || encapsulations[0].ciphertext || "");
-      } else if (typeof row.kem_ciphertext === 'string') {
-        kem_ciphertext = row.kem_ciphertext;
-      } else if (ringSig && typeof ringSig.kem_ciphertext === 'string') {
-        kem_ciphertext = ringSig.kem_ciphertext;
+        if (Array.isArray(encapsulations) && encapsulations.length > 0) {
+          const matchingEnc = encapsulations.find((e: any) => e.juror_id === jurorId);
+          kem_ciphertext = matchingEnc 
+            ? (matchingEnc.kem_ciphertext || matchingEnc.ciphertext || "") 
+            : (encapsulations[0].kem_ciphertext || encapsulations[0].ciphertext || "");
+        } else if (ringSig && typeof ringSig.kem_ciphertext === 'string') {
+          kem_ciphertext = ringSig.kem_ciphertext;
+        }
       }
 
       return {
