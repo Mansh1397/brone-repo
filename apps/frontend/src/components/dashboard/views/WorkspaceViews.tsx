@@ -395,7 +395,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
         }
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        const errorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        const errorMsg = err instanceof Error ? `${err.name}: ${err.message} \nStack: ${err.stack}` : String(err);
 
         let stepName = "Outer Fetch/Keypair Resolution";
         let diagnostics = `Task: ${!!task}`;
@@ -414,7 +414,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
               <h4>🚨 DECRYPTION CRASH 🚨</h4>
               <p><strong>Failed at Step:</strong> {stepName}</p>
               <p><strong>Diagnostics:</strong> {diagnostics}</p>
-              <p><strong>Error:</strong> {cleanError}</p>
+              <pre style={{ fontSize: '10px', whiteSpace: 'pre-wrap', color: 'red', marginTop: '5px' }}>{cleanError}</pre>
             </div>
           );
         }
