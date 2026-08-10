@@ -771,10 +771,26 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       ORDER BY RANDOM() LIMIT 10
     `, [geohashFilter, jurorPubkey, jurorId]);
 
-    const posts = result.rows.map((row: any) => {
+    const posts = await Promise.all(result.rows.map(async (row: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
       let kem_ciphertext = row.kem_ciphertext || "";
 
+      // Fallback 1: Query post_encapsulations table for any encapsulation for this post
+      if (!kem_ciphertext) {
+        try {
+          const fallbackRes = await pool.query(
+            "SELECT kem_ciphertext FROM post_encapsulations WHERE ipfs_hash = $1 LIMIT 1",
+            [row.ipfs_hash]
+          );
+          if (fallbackRes.rows.length > 0) {
+            kem_ciphertext = fallbackRes.rows[0].kem_ciphertext || "";
+          }
+        } catch (e) {
+          // Skip
+        }
+      }
+
+      // Fallback 2: JSON parsing
       if (!kem_ciphertext) {
         const encapsulations = row.encapsulations || row.keys || ringSig?.encapsulations || ringSig?.keys || [];
 
@@ -797,7 +813,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
         author_pubkey: row.author_pubkey || "",
         created_at: row.submitted_at
       };
-    });
+    }));
 
     console.warn("[OUTGOING JURY TASKS]:", posts.map(t => ({ id: t.ipfs_hash, hasKem: !!t.kem_ciphertext, hasPayload: !!t.encrypted_payload })));
 
