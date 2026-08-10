@@ -1271,19 +1271,42 @@ export const ReportingHub: React.FC = () => {
       const encapsulations: any[] = [];
       for (let i = 0; i < targetKeys.length; i++) {
         const keyStr = targetKeys[i];
-        let kemPubHex = keyStr.split(':')[1];
-        let jurorId = keyStr.split(':')[0];
-        if (!kemPubHex || kemPubHex.length !== 3136) {
-          try {
-            const dummyKem = ml_kem1024.keygen();
-            kemPubHex = uint8ArrayToHex(dummyKem.publicKey);
-          } catch (e) {
-            kemPubHex = "";
+        
+        // 1. Extract the actual Juror's public key, not the Author's
+        const rawJurorPubKey = keyStr.includes(':') ? keyStr.split(':')[1] : keyStr;
+        const jurorId = keyStr.includes(':') ? keyStr.split(':')[0] : keyStr;
+        
+        if (!rawJurorPubKey) {
+          console.error("🚨 ROUTING FATAL: Juror object is missing kem_public_key!", keyStr);
+          throw new Error(`Cannot encrypt post: Missing Public Key for Juror ${jurorId || 'Unknown'}`);
+        }
+
+        // 2. Format to Bytes
+        let jurorPubKeyBytes: Uint8Array;
+        if (rawJurorPubKey instanceof Uint8Array) {
+          jurorPubKeyBytes = rawJurorPubKey;
+        } else {
+          const cleanHex = rawJurorPubKey.replace(/^(ENC_GCM:|0x)/, '').trim();
+          jurorPubKeyBytes = new Uint8Array(Math.ceil(cleanHex.length / 2));
+          for(let i=0; i<jurorPubKeyBytes.length; i++) {
+            jurorPubKeyBytes[i] = parseInt(cleanHex.substring(i*2, i*2+2), 16);
           }
         }
+
+        // 3. Validate Kyber Size
+        if (jurorPubKeyBytes.length !== 1184 && jurorPubKeyBytes.length !== 1568 && jurorPubKeyBytes.length !== 3168) {
+          console.warn(`🚨 Invalid Juror Public Key length (${jurorPubKeyBytes.length} bytes). Generating fallback decoy.`);
+          try {
+            const dummyKem = ml_kem1024.keygen();
+            jurorPubKeyBytes = dummyKem.publicKey;
+          } catch (e) {
+            throw new Error(`🚨 ROUTING FATAL: Invalid Juror Public Key length (${jurorPubKeyBytes.length} bytes).`);
+          }
+        }
+
         try {
-          const jurorPubKeyBytes = hexToBytes(kemPubHex);
-          const { cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
+          // 4. Encapsulate specifically for THIS juror
+          const { cipherText: cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
           // 1. Import the post-quantum shared secret as an AES-KW key
           const wrappingKey = await window.crypto.subtle.importKey(
             "raw",
