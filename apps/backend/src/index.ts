@@ -524,11 +524,32 @@ const handlePostArbitration = async (req: any, res: any) => {
     });
 
     // 7. Insert KEM encapsulations into post_encapsulations for relational querying
-    const encapsulations = req.body.encapsulations || req.body.kem_ciphertext || ring_signature.encapsulations || [];
-    if (Array.isArray(encapsulations) && encapsulations.length > 0) {
-      console.warn("[ENCAPSULATION SHAPE]:", JSON.stringify(encapsulations[0]));
+    const rawEncap = req.body.encapsulations || req.body.kem_ciphertext || (ring_signature && ring_signature.encapsulations) || [];
+    console.warn("🚨 [RAW KEM PAYLOAD] 🚨 Type:", typeof rawEncap, "Value:", rawEncap);
+
+    let encapArray = [];
+    if (typeof rawEncap === 'string') {
+      try { encapArray = JSON.parse(rawEncap); } catch(e) {}
+    } else if (Array.isArray(rawEncap)) {
+      encapArray = rawEncap;
+    } else if (typeof rawEncap === 'object' && rawEncap !== null) {
+      encapArray = Object.entries(rawEncap).map(([k, v]) => ({ pubkey: k, ciphertext: v }));
+    }
+
+    if (encapArray.length > 0) {
+      console.warn("[ENCAPSULATION SHAPE]:", JSON.stringify(encapArray[0]));
       try {
-        for (const encap of encapsulations) {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS post_encapsulations (
+            ipfs_hash VARCHAR(255) NOT NULL,
+            juror_pubkey TEXT NOT NULL,
+            kem_ciphertext TEXT NOT NULL,
+            wrapped_key TEXT DEFAULT '',
+            PRIMARY KEY (ipfs_hash, juror_pubkey)
+          )
+        `).catch(() => {});
+
+        for (const encap of encapArray) {
           const jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey || "";
           const kemCipher = encap.kem_ciphertext || encap.ciphertext || encap.encapsulation || "";
           const wrapped = encap.wrapped_key || encap.wrappedKey || "";
