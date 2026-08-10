@@ -557,8 +557,18 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
         "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
       );
     } catch (unwrapErr: any) {
+      const myPubKeyRaw = localStorage.getItem('pq_kem_public_key') || '';
+      let pubKeyFingerprint = "Missing";
+      if (myPubKeyRaw) {
+          const kemPubPart = myPubKeyRaw.includes(':') ? myPubKeyRaw.split(':')[1] : myPubKeyRaw;
+          const cleanPub = kemPubPart.replace(/^(ENC_GCM:|0x)/, '').trim();
+          const pubBytes = new Uint8Array(Math.ceil(cleanPub.length / 2));
+          for(let i=0; i<pubBytes.length; i++) pubBytes[i] = parseInt(cleanPub.substring(i*2, i*2+2), 16);
+          pubKeyFingerprint = Array.from(pubBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
+      }
+
       const keyFingerprint = Array.from(privKeyBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
-      return `🔒 Locked (Mismatch) | KEM Size: ${kemBytes.length} | My Key Fingerprint: ${keyFingerprint}`;
+      return `🔒 Locked | My PrivFP: ${keyFingerprint} | My PubFP: ${pubKeyFingerprint}`;
     }
 
     currentStep = `Decrypt Payload (Payload Len: ${payloadBytes.length})`;
@@ -1336,6 +1346,15 @@ export const ReportingHub: React.FC = () => {
         }
 
         try {
+          const pubKeyFingerprint = Array.from(jurorPubKeyBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
+          console.log(`[AUTHOR NETWORK] Encrypting for Juror ${jurorId} | PubKey FP: ${pubKeyFingerprint} | Bytes: ${jurorPubKeyBytes.length}`);
+          
+          if (jurorPubKeyBytes.length < 1000) {
+              alert(`DATABASE CORRUPTION: Juror ${jurorId}'s Public Key is only ${jurorPubKeyBytes.length} bytes! The DB column is truncating it.`);
+          } else {
+              alert(`Encrypting for Juror ${jurorId} | PubKey Fingerprint: ${pubKeyFingerprint}`);
+          }
+
           // 4. Encapsulate specifically for THIS juror
           const { cipherText: cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
           // 1. Import the post-quantum shared secret as an AES-KW key
