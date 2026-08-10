@@ -416,6 +416,18 @@ const handlePostArbitration = async (req: any, res: any) => {
     const { ipfs_hash, geohash, ring_signature } = req.body;
     const payload = req.body.encrypted_payload || req.body.payload || '';
 
+    // Align KEM encapsulations in case they are sent at root level
+    if (ring_signature && typeof ring_signature === 'object') {
+      const encapsulations = req.body.encapsulations || req.body.keys || req.body.kem_ciphertext;
+      if (encapsulations) {
+        if (Array.isArray(encapsulations)) {
+          ring_signature.encapsulations = encapsulations;
+        } else if (typeof encapsulations === 'string') {
+          ring_signature.kem_ciphertext = encapsulations;
+        }
+      }
+    }
+
     if (payload) {
       mockEncryptedData[ipfs_hash] = payload;
     }
@@ -752,7 +764,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       return {
         id: row.ipfs_hash,
         ipfs_hash: row.ipfs_hash || "",
-        kem_ciphertext: kem_ciphertext || "",
+        kem_ciphertext: kem_ciphertext || row.kem_ciphertext || row.encapsulation || "",
         encrypted_payload: row.encrypted_payload || "",
         ring_signature: ringSig || "",
         author_pubkey: row.author_pubkey || "",
