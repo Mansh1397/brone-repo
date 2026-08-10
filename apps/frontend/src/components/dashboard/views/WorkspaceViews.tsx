@@ -18,6 +18,17 @@ import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 // @ts-ignore
 import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 
+const hexToUint8Array = (hexString: string): Uint8Array => {
+  if (!hexString) return new Uint8Array();
+  const cleanHex = hexString.startsWith('0x') ? hexString.slice(2) : hexString;
+  const matches = cleanHex.match(/.{1,2}/g);
+  return new Uint8Array((matches || []).map(byte => parseInt(byte, 16)));
+};
+
+const uint8ArrayToHex = (arr: Uint8Array): string => {
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
 // 1. Get mock CID from text
 const getMockCID = (text: string): string => {
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -191,8 +202,8 @@ const decryptPayloadForJuror = async (
 
     if (match && typeof match.kem_ciphertext === 'string' && typeof match.wrapped_key === 'string') {
       try {
-        const kemCiphertextBytes = new Uint8Array(Buffer.from(match.kem_ciphertext, 'hex'));
-        const wrappedKeyBytes = new Uint8Array(Buffer.from(match.wrapped_key, 'hex'));
+        const kemCiphertextBytes = hexToUint8Array(match.kem_ciphertext);
+        const wrappedKeyBytes = hexToUint8Array(match.wrapped_key);
 
         const sharedSecret = ml_kem1024.decapsulate(kemCiphertextBytes, myKeys.kemPrivateKey);
 
@@ -418,8 +429,8 @@ const getOrCreateKeyPair = async (): Promise<{
 
   const stored = await loadAndDecryptState();
   if (stored && stored.pqDsaPrivateKeyHex && stored.pqKemPrivateKeyHex && stored.pqPublicKeyHex) {
-    const dsaPrivateKey = new Uint8Array(Buffer.from(stored.pqDsaPrivateKeyHex, 'hex'));
-    const kemPrivateKey = new Uint8Array(Buffer.from(stored.pqKemPrivateKeyHex, 'hex'));
+    const dsaPrivateKey = hexToUint8Array(stored.pqDsaPrivateKeyHex);
+    const kemPrivateKey = hexToUint8Array(stored.pqKemPrivateKeyHex);
     if (dsaPrivateKey.length === 4896 && kemPrivateKey.length === 3168) {
       const keypairObj = {
         privateKey: dsaPrivateKey,
@@ -447,14 +458,14 @@ const getOrCreateKeyPair = async (): Promise<{
   };
 
   if (stored) {
-    stored.pqDsaPrivateKeyHex = Buffer.from(dsaKeys.secretKey).toString('hex');
-    stored.pqKemPrivateKeyHex = Buffer.from(kemKeys.secretKey).toString('hex');
+    stored.pqDsaPrivateKeyHex = uint8ArrayToHex(dsaKeys.secretKey);
+    stored.pqKemPrivateKeyHex = uint8ArrayToHex(kemKeys.secretKey);
     stored.pqPublicKeyHex = publicKeyHex;
     await encryptAndSaveState(stored);
   } else {
     await encryptAndSaveState({
-      pqDsaPrivateKeyHex: Buffer.from(dsaKeys.secretKey).toString('hex'),
-      pqKemPrivateKeyHex: Buffer.from(kemKeys.secretKey).toString('hex'),
+      pqDsaPrivateKeyHex: uint8ArrayToHex(dsaKeys.secretKey),
+      pqKemPrivateKeyHex: uint8ArrayToHex(kemKeys.secretKey),
       pqPublicKeyHex: publicKeyHex
     });
   }
@@ -900,13 +911,13 @@ export const ReportingHub: React.FC = () => {
         if (!kemPubHex || kemPubHex.length !== 3136) {
           try {
             const dummyKem = ml_kem1024.keygen();
-            kemPubHex = Buffer.from(dummyKem.publicKey).toString('hex');
+            kemPubHex = uint8ArrayToHex(dummyKem.publicKey);
           } catch (e) {
             kemPubHex = "";
           }
         }
         try {
-          const jurorPubKeyBytes = new Uint8Array(Buffer.from(kemPubHex, 'hex'));
+          const jurorPubKeyBytes = hexToUint8Array(kemPubHex);
           const { cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
           const wrappedKey = new Uint8Array(32);
           for (let j = 0; j < 32; j++) {
@@ -914,8 +925,8 @@ export const ReportingHub: React.FC = () => {
           }
           encapsulations.push({
             juror_id: jurorId,
-            kem_ciphertext: Buffer.from(cipherText).toString('hex'),
-            wrapped_key: Buffer.from(wrappedKey).toString('hex')
+            kem_ciphertext: uint8ArrayToHex(cipherText),
+            wrapped_key: uint8ArrayToHex(wrappedKey)
           });
         } catch (err) {
           console.warn("Failed KEM encapsulation for juror:", jurorId, err);
