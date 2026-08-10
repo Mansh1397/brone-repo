@@ -131,24 +131,19 @@ export const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: a
 
     currentStep = "Parsing Plaintext";
     const decryptedBytes = new Uint8Array(decryptedBuffer);
-    
     try {
-        const text = new TextDecoder().decode(decryptedBytes).replace(/\0+$/, '');
-        if(text.startsWith('{') || text.startsWith('[')) {
-            try {
-                const obj = JSON.parse(text);
-                return obj.content || obj.text || JSON.stringify(obj, null, 2);
-            } catch(e) { return text; }
-        }
-        
-        // If it contains non-printable characters, it's compressed/binary data
-        const isGarbled = /[^\x20-\x7E\t\n\r]/.test(text);
-        if (isGarbled) {
-            return "Binary Payload (Hex): " + Array.from(decryptedBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-        }
+        const text = new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, '');
         return text;
-    } catch(e) {
-        return "Binary Payload (Hex): " + Array.from(decryptedBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) {
+        // If it's a binary/compressed payload causing garbled text, strip non-printable characters safely
+        let readable = "";
+        for (let i = 0; i < decryptedBytes.length; i++) {
+            const char = String.fromCharCode(decryptedBytes[i]);
+            if (/[a-zA-Z0-9\s.,!?'"{}[\]()\-:]/.test(char)) {
+                readable += char;
+            }
+        }
+        return `[Recovered Binary Text]: ${readable.trim()}`;
     }
   } catch (err: any) {
     console.error(`🚨 CRASH AT: ${currentStep}`, err);

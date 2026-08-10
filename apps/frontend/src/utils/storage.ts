@@ -148,76 +148,66 @@ export async function encryptAndSaveState(state: any): Promise<void> {
   local.setItem('brone_secure_vault', transportString);
 }
 
-const hexToBytes = (hex: string): Uint8Array => {
-  const cleanHex = hex.replace(/^(ENC_GCM:|0x)/, '');
-  const bytes = new Uint8Array(Math.ceil(cleanHex.length / 2));
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-};
-
-const base64ToBytes = (base64: string): Uint8Array => {
-  const binaryString = safeAtob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes;
-};
-
-export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: CryptoKey): Promise<Uint8Array> => {
-  try {
-    let parsedData = encryptedData;
-    
-    // 1. Attempt JSON parse
-    if (typeof encryptedData === 'string') {
-      try { parsedData = JSON.parse(encryptedData); } 
-      catch (e) { parsedData = encryptedData; }
-    }
-
-    let rawBytes: Uint8Array | null = null;
-    let ivBytes: Uint8Array;
-    let cipherBytes: Uint8Array;
-
-    // 2. Format extraction
-    if (typeof parsedData === 'string') {
-      const cleanStr = parsedData.replace(/^(ENC_GCM:|0x)/, '');
-      rawBytes = /^[0-9a-fA-F]+$/.test(cleanStr) ? hexToBytes(parsedData) : base64ToBytes(parsedData);
-      
-      // If we don't have an encryption key, or if the byte length matches a standard raw ML-KEM private key (1184, 2400, or 3168 bytes), bypass decryption entirely.
-      if (!encryptionKey || rawBytes.length === 1184 || rawBytes.length === 2400 || rawBytes.length === 3168) {
-        console.warn("🚨 Bypassing decryption: Payload matches unencrypted ML-KEM private key signature.");
-        return rawBytes;
-      }
-
-      ivBytes = rawBytes.slice(0, 12);
-      cipherBytes = rawBytes.slice(12);
-    } else if (parsedData && parsedData.iv && parsedData.ciphertext) {
-      ivBytes = typeof parsedData.iv === 'string' ? hexToBytes(parsedData.iv) : new Uint8Array(parsedData.iv);
-      cipherBytes = typeof parsedData.ciphertext === 'string' ? hexToBytes(parsedData.ciphertext) : new Uint8Array(parsedData.ciphertext);
-    } else {
-      throw new Error("Unrecognized storage format.");
-    }
-
-    // 3. Attempt Decryption
+const omnivorousToBytes = (data: any): Uint8Array => {
+  if (!data) return new Uint8Array();
+  if (data instanceof Uint8Array) return data;
+  if (Array.isArray(data)) return new Uint8Array(data);
+  if (typeof data === 'string') {
     try {
-      if (!encryptionKey) throw new Error("No key provided.");
-      const cryptoObj = getCrypto();
-      const decryptedBuffer = await cryptoObj.subtle.decrypt(
-        { name: "AES-GCM", iv: ivBytes },
-        encryptionKey,
-        cipherBytes
-      );
-      return new Uint8Array(decryptedBuffer);
-    } catch (cryptoErr) {
-      console.warn("🚨 AES Decrypt Failed (OperationError). Assuming payload is UNENCRYPTED raw private key. 🚨");
-      // ULTIMATE FALLBACK: Return the original raw bytes
-      return rawBytes ? rawBytes : cipherBytes;
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) return new Uint8Array(parsed);
+      if (parsed?.data && Array.isArray(parsed.data)) return new Uint8Array(parsed.data);
+    } catch (e) { /* Not JSON */ }
+    
+    const cleanStr = data.replace(/^(ENC_GCM:|0x)/, '').trim();
+    if (cleanStr.includes(',')) {
+      return new Uint8Array(cleanStr.replace(/[\[\]]/g, '').split(',').map(n => parseInt(n.trim(), 10) || 0));
+    }
+    if (/^[0-9a-fA-F]+$/.test(cleanStr) && cleanStr.length % 2 === 0) {
+      const bytes = new Uint8Array(cleanStr.length / 2);
+      for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(cleanStr.substring(i * 2, i * 2 + 2), 16);
+      return bytes;
+    }
+    try { return new Uint8Array(Array.from(window.atob(cleanStr)).map(c => c.charCodeAt(0))); } catch (e) {}
+  }
+  return new Uint8Array();
+};
+
+export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: CryptoKey): Promise<any> => {
+  try {
+    const rawBytes = omnivorousToBytes(encryptedData);
+    
+    // ML-KEM Private Keys are very large. Auth tokens are small.
+    const isPostQuantumKey = rawBytes.length > 1000;
+
+    let decryptedBytes = rawBytes;
+    
+    // Only attempt AES-GCM decrypt on smaller payloads that have an encryption key
+    if (encryptionKey && rawBytes.length > 12 && !isPostQuantumKey) {
+        try {
+          const ivBytes = rawBytes.slice(0, 12);
+          const cipherBytes = rawBytes.slice(12);
+          const cryptoObj = getCrypto();
+          const buffer = await cryptoObj.subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, encryptionKey, cipherBytes);
+          decryptedBytes = new Uint8Array(buffer);
+        } catch(e) {
+          console.warn("AES-GCM decrypt failed, falling back to raw bytes.");
+        }
+    }
+
+    // SMART RETURN: 
+    if (isPostQuantumKey) {
+      return decryptedBytes; // Juror tab needs Uint8Array
+    } else {
+      try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, ''); // Auth needs String
+      } catch(e) {
+        return decryptedBytes;
+      }
     }
   } catch (err: any) {
-    console.error("Critical Vault Failure", err);
-    throw new Error(`decryptStoragePayload failed: ${err.message || 'OperationError'} \nStack: ${err.stack}`);
+    console.error("Storage Decrypt Error:", err);
+    throw err;
   }
 };
 
@@ -238,10 +228,14 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
 
   try {
     const key = await getOrCreateStorageKey();
-    const decryptedBytes = await decryptStoragePayload(vaultData, key);
+    const decryptedResult = await decryptStoragePayload(vaultData, key);
 
-    // Decode and parse JS state object
-    const decryptedString = new TextDecoder().decode(decryptedBytes);
+    let decryptedString: string;
+    if (typeof decryptedResult === 'string') {
+      decryptedString = decryptedResult;
+    } else {
+      decryptedString = new TextDecoder().decode(decryptedResult);
+    }
     return JSON.parse(decryptedString);
   } catch (error) {
     // 4. FAIL-SAFE PURGE BOUNDARIES
