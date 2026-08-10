@@ -206,23 +206,31 @@ const decryptPayloadForJuror = async (
 
     if (match && typeof match.kem_ciphertext === 'string' && typeof match.wrapped_key === 'string') {
       try {
-        const kemCiphertextBytes = hexToBytes(match.kem_ciphertext);
+        const kemBytes = hexToBytes(match.kem_ciphertext);
         const wrappedKeyBytes = hexToBytes(match.wrapped_key);
 
-        const sharedSecret = ml_kem1024.decapsulate(kemCiphertextBytes, myKeys.kemPrivateKey);
+        console.warn("🚨 [DECRYPTION DIAGNOSTICS] 🚨");
+        console.warn("- KEM Bytes Length:", kemBytes.length);
+        console.warn("- Wrapped Key Bytes Length:", wrappedKeyBytes.length);
+        console.warn("- Payload Bytes Length:", hexToBytes(encryptedStr).length);
 
-        // 1. Import the shared secret as an AES-KW key
-        const wrappingKey = await window.crypto.subtle.importKey(
-          "raw",
-          sharedSecret,
-          "AES-KW",
-          false,
-          ["unwrapKey"]
-        );
+        let sharedSecretBytes;
+        try {
+          sharedSecretBytes = ml_kem1024.decapsulate(kemBytes, myKeys.kemPrivateKey);
+        } catch (e) {
+          console.error("🚨 CRASH IN DECAPSULATE 🚨", e);
+          throw e;
+        }
 
         let unwrappedAesKey: CryptoKey | null = null;
         try {
-          // Attempt 1: AES-KW (Standard Key Wrap, no IV required)
+          const wrappingKey = await window.crypto.subtle.importKey(
+            "raw",
+            sharedSecretBytes,
+            "AES-KW",
+            false,
+            ["unwrapKey"]
+          );
           unwrappedAesKey = await window.crypto.subtle.unwrapKey(
             "raw",
             wrappedKeyBytes,
@@ -232,13 +240,13 @@ const decryptPayloadForJuror = async (
             true,
             ["decrypt"]
           );
-        } catch (e1) {
+        } catch (e) {
+          console.error("🚨 CRASH IN UNWRAPKEY 🚨", e);
           console.warn("AES-KW unwrap failed, attempting AES-GCM fallback...");
           try {
-            // Attempt 2: AES-GCM Fallback (Requires importing the secret as AES-GCM)
             const gcmWrappingKey = await window.crypto.subtle.importKey(
               "raw",
-              sharedSecret,
+              sharedSecretBytes,
               "AES-GCM",
               false,
               ["unwrapKey"]
@@ -253,7 +261,8 @@ const decryptPayloadForJuror = async (
               ["decrypt"]
             );
           } catch (e2) {
-            throw new Error(`Unwrap failed for both AES-KW and AES-GCM. Secret length: ${sharedSecret.length}, Wrapped length: ${wrappedKeyBytes.length}`);
+            console.error("🚨 CRASH IN FALLBACK UNWRAPKEY 🚨", e2);
+            throw new Error(`Unwrap failed for both AES-KW and AES-GCM. Secret length: ${sharedSecretBytes.length}, Wrapped length: ${wrappedKeyBytes.length}`);
           }
         }
 
