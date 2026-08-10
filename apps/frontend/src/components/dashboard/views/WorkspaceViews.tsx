@@ -871,9 +871,20 @@ export const ReportingHub: React.FC = () => {
       const ringSig = generateRingSignature(messageToSign, privKeyHex, ringDsaKeys) as any;
 
       // 5. Encapsulate the AES key against each juror's ML-KEM public key
+      let targetKeys = decoyRing.filter(key => {
+        const dsaPart = key.split(':')[0];
+        const myDsaPart = publicKeyHex.split(':')[0];
+        return dsaPart !== myDsaPart;
+      });
+
+      if (targetKeys.length === 0) {
+        alert("Cannot secure post: No active users found in your area to act as jurors.");
+        return; // Halt submission
+      }
+
       const encapsulations: any[] = [];
-      for (let i = 0; i < decoyRing.length; i++) {
-        const keyStr = decoyRing[i];
+      for (let i = 0; i < targetKeys.length; i++) {
+        const keyStr = targetKeys[i];
         let kemPubHex = keyStr.split(':')[1];
         let jurorId = keyStr.split(':')[0];
         if (!kemPubHex || kemPubHex.length !== 3136) {
@@ -886,19 +897,24 @@ export const ReportingHub: React.FC = () => {
         }
         try {
           const jurorPubKeyBytes = new Uint8Array(Buffer.from(kemPubHex, 'hex'));
-          const { ciphertext, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
+          const { cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
           const wrappedKey = new Uint8Array(32);
           for (let j = 0; j < 32; j++) {
             wrappedKey[j] = aesKey[j] ^ sharedSecret[j];
           }
           encapsulations.push({
             juror_id: jurorId,
-            kem_ciphertext: Buffer.from(ciphertext).toString('hex'),
+            kem_ciphertext: Buffer.from(cipherText).toString('hex'),
             wrapped_key: Buffer.from(wrappedKey).toString('hex')
           });
         } catch (err) {
           console.warn("Failed KEM encapsulation for juror:", jurorId, err);
         }
+      }
+
+      if (encapsulations.length === 0) {
+        alert("Cryptographic failure: Could not generate KEM envelopes.");
+        return;
       }
 
       // Add the encapsulations directly to the ring signature payload
