@@ -501,6 +501,68 @@ const decryptPayloadForJuror = async (
 };
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
+const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: any) => {
+  try {
+    // 1. Hex Decoder
+    const hexToBytes = (hexStr: string) => {
+      const clean = hexStr.replace(/^(ENC_GCM:|0x)/, '').trim();
+      const bytes = new Uint8Array(Math.ceil(clean.length / 2));
+      for(let i=0; i<bytes.length; i++) bytes[i] = parseInt(clean.substring(i*2, i*2+2), 16);
+      return bytes;
+    };
+
+    // 2. Safe Private Key Parsing (Handles Hex, Arrays, or Objects)
+    let privKeyBytes: Uint8Array;
+    if (localPrivKeyRaw instanceof Uint8Array) {
+      privKeyBytes = localPrivKeyRaw;
+    } else if (typeof localPrivKeyRaw === 'string') {
+      if (localPrivKeyRaw.includes('{') || localPrivKeyRaw.includes('[')) {
+        const parsed = JSON.parse(localPrivKeyRaw);
+        privKeyBytes = new Uint8Array(Array.isArray(parsed) ? parsed : Object.values(parsed));
+      } else {
+        privKeyBytes = hexToBytes(localPrivKeyRaw);
+      }
+    } else {
+      privKeyBytes = new Uint8Array(Object.values(localPrivKeyRaw));
+    }
+
+    // 3. Network Payload Parsing
+    const kemBytes = hexToBytes(task.kem_ciphertext);
+    const wrappedBytes = hexToBytes(task.wrapped_key);
+    const payloadBytes = hexToBytes(task.encrypted_payload);
+
+    // 4. Cryptographic Pipeline
+    const secret = await mlKemObj.decapsulate(kemBytes, privKeyBytes);
+    const wrappingKey = await crypto.subtle.importKey("raw", secret, "AES-KW", false, ["unwrapKey"]);
+    const aesKey = await crypto.subtle.unwrapKey(
+      "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+    );
+
+    const iv = payloadBytes.slice(0, 12);
+    const cipher = payloadBytes.slice(12);
+    const decryptedBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, cipher);
+
+    // 5. Binary-Safe Text Decoding
+    const decBytes = new Uint8Array(decryptedBuffer);
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(decBytes).replace(/\0+$/, '');
+      return text;
+    } catch(e) {
+      // If it's compressed/binary, extract readable characters
+      let readable = "";
+      for (let i = 0; i < decBytes.length; i++) {
+        const char = String.fromCharCode(decBytes[i]);
+        if (/[a-zA-Z0-9\s.,!?'"{}[\]()\-:]/.test(char)) readable += char;
+      }
+      return `[Binary Payload]: ${readable.trim()}`;
+    }
+  } catch (err: any) {
+    console.error("🚨 SANDBOX DECRYPT CRASH 🚨", err);
+    return `Decryption Error: ${err.message || err.name}`;
+  }
+};
+
+// 4. React component to fetch and decrypt IPFS descriptions client-side
 const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?: any }> = ({ ipfsHash, fallbackText, task }) => {
   const [text, setText] = useState<React.ReactNode | null>(null);
   const [loading, setLoading] = useState(true);
@@ -521,35 +583,20 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           const payload = task.encrypted_payload;
           if (payload && payload.startsWith("ENC_GCM:")) {
             const myKeys = await getOrCreateKeyPair();
-            const ringSigWithEncap = {
-              ...task.ring_signature,
-              encapsulation: task.ring_signature?.encapsulation || {
-                juror_id: myKeys.publicKeyHex.split(':')[0],
-                kem_ciphertext: task.kem_ciphertext,
-                wrapped_key: task.wrapped_key
-              }
-            };
-            const decrypted = await decryptPayloadForJuror(payload, ringSigWithEncap, myKeys);
-            if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
-              const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
-              let stepName = "Unknown";
-              let diagnostics = "N/A";
-              let cleanError = errorMsg;
-
-              if (errorMsg.includes("Step:") && errorMsg.includes("Diag:")) {
-                const parts = errorMsg.split('|');
-                stepName = parts[0].replace("Step:", "").trim();
-                diagnostics = parts[1].replace("Diag:", "").trim();
-                cleanError = parts.slice(2).join('|').replace("Error:", "").trim();
-              }
-
+            const rawStorageVal = localStorage.getItem('kem_private_key') || 
+                                  localStorage.getItem('pqKemPrivateKeyHex') || 
+                                  (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
+            
+            const decrypted = await forceJurorDecryption(task, rawStorageVal, ml_kem1024);
+            if (typeof decrypted === 'string' && decrypted.startsWith('Decryption Error:')) {
+              const errorMsg = decrypted.replace('Decryption Error:', '').trim();
               if (active) {
                 setText(
                   <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
                     <h4>🚨 DECRYPTION CRASH 🚨</h4>
-                    <p><strong>Failed at Step:</strong> {stepName}</p>
-                    <p><strong>Diagnostics:</strong> {diagnostics}</p>
-                    <p><strong>Error:</strong> {cleanError}</p>
+                    <p><strong>Failed at Step:</strong> Sandbox</p>
+                    <p><strong>Diagnostics:</strong> N/A</p>
+                    <p><strong>Error:</strong> {errorMsg}</p>
                   </div>
                 );
               }
@@ -567,27 +614,28 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
         const payload = response.data.encrypted_payload;
         if (payload && payload.startsWith("ENC_GCM:")) {
           const myKeys = await getOrCreateKeyPair();
-          const decrypted = await decryptPayloadForJuror(payload, response.data.ring_signature, myKeys);
-          if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
-            const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
-            let stepName = "Unknown";
-            let diagnostics = "N/A";
-            let cleanError = errorMsg;
+          const rawStorageVal = localStorage.getItem('kem_private_key') || 
+                                localStorage.getItem('pqKemPrivateKeyHex') || 
+                                (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
+          const ringSig = response.data.ring_signature || {};
+          const match = ringSig.encapsulation || (ringSig.encapsulations && ringSig.encapsulations[0]) || {};
+          
+          const decTask = {
+            kem_ciphertext: match.kem_ciphertext || response.data.kem_ciphertext,
+            wrapped_key: match.wrapped_key || response.data.wrapped_key,
+            encrypted_payload: payload
+          };
 
-            if (errorMsg.includes("Step:") && errorMsg.includes("Diag:")) {
-              const parts = errorMsg.split('|');
-              stepName = parts[0].replace("Step:", "").trim();
-              diagnostics = parts[1].replace("Diag:", "").trim();
-              cleanError = parts.slice(2).join('|').replace("Error:", "").trim();
-            }
-
+          const decrypted = await forceJurorDecryption(decTask, rawStorageVal, ml_kem1024);
+          if (typeof decrypted === 'string' && decrypted.startsWith('Decryption Error:')) {
+            const errorMsg = decrypted.replace('Decryption Error:', '').trim();
             if (active) {
               setText(
                 <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
                   <h4>🚨 DECRYPTION CRASH 🚨</h4>
-                  <p><strong>Failed at Step:</strong> {stepName}</p>
-                  <p><strong>Diagnostics:</strong> {diagnostics}</p>
-                  <p><strong>Error:</strong> {cleanError}</p>
+                  <p><strong>Failed at Step:</strong> Sandbox</p>
+                  <p><strong>Diagnostics:</strong> N/A</p>
+                  <p><strong>Error:</strong> {errorMsg}</p>
                 </div>
               );
             }
@@ -600,25 +648,13 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
         const errorMsg = err instanceof Error ? `${err.name}: ${err.message} \nStack: ${err.stack}` : String(err);
-
-        let stepName = "Outer Fetch/Keypair Resolution";
-        let diagnostics = `Task: ${!!task}`;
-        let cleanError = errorMsg;
-
-        if (errorMsg.includes("Step:") && errorMsg.includes("Diag:")) {
-          const parts = errorMsg.split('|');
-          stepName = parts[0].replace("Step:", "").trim();
-          diagnostics = parts[1].replace("Diag:", "").trim();
-          cleanError = parts.slice(2).join('|').replace("Error:", "").trim();
-        }
-
         if (active) {
           setText(
             <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
               <h4>🚨 DECRYPTION CRASH 🚨</h4>
-              <p><strong>Failed at Step:</strong> {stepName}</p>
-              <p><strong>Diagnostics:</strong> {diagnostics}</p>
-              <pre style={{ fontSize: '10px', whiteSpace: 'pre-wrap', color: 'red', marginTop: '5px' }}>{cleanError}</pre>
+              <p><strong>Failed at Step:</strong> Outer Fetch/Keypair Resolution</p>
+              <p><strong>Diagnostics:</strong> Task: {String(!!task)}</p>
+              <pre style={{ fontSize: '10px', whiteSpace: 'pre-wrap', color: 'red', marginTop: '5px' }}>{errorMsg}</pre>
             </div>
           );
         }
