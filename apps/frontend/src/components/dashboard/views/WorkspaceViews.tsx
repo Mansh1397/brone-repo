@@ -502,15 +502,11 @@ const decryptPayloadForJuror = async (
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
 const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: any) => {
+  let currentStep = "Initialization";
   try {
-    // GUARD: Ensure we are in the browser and WebCrypto exists
-    if (typeof window === 'undefined') return "Loading secure context...";
-    if (!window.crypto || !window.crypto.subtle) {
-      throw new Error("WebCrypto API is not available (requires HTTPS and Browser context).");
-    }
+    if (typeof window === 'undefined') return "Loading...";
     const subtle = window.crypto.subtle;
 
-    // 1. Hex Decoder
     const hexToBytes = (hexStr: string) => {
       const clean = hexStr.replace(/^(ENC_GCM:|0x)/, '').trim();
       const bytes = new Uint8Array(Math.ceil(clean.length / 2));
@@ -518,8 +514,15 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
       return bytes;
     };
 
-    // 2. Safe Private Key Parsing
+    currentStep = "Parsing Local Key";
     let privKeyBytes: Uint8Array;
+    
+    // Attempt to stringify to check if it's an un-decrypted Auth token
+    const rawString = typeof localPrivKeyRaw === 'string' ? localPrivKeyRaw : JSON.stringify(localPrivKeyRaw || {});
+    if (rawString.includes('iv') && rawString.includes('ciphertext')) {
+      return `[DIAGNOSTIC FATAL]: Private key is still AES-GCM encrypted. Length: ${rawString.length}`;
+    }
+
     if (localPrivKeyRaw instanceof Uint8Array) {
       privKeyBytes = localPrivKeyRaw;
     } else if (typeof localPrivKeyRaw === 'string') {
@@ -533,37 +536,39 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
       privKeyBytes = new Uint8Array(Object.values(localPrivKeyRaw || {}));
     }
 
-    // 3. Network Payload Parsing
+    currentStep = "Parsing Network Hex";
     const kemBytes = hexToBytes(task.kem_ciphertext);
     const wrappedBytes = hexToBytes(task.wrapped_key);
     const payloadBytes = hexToBytes(task.encrypted_payload);
 
-    // 4. Cryptographic Pipeline (Using explicitly bound `subtle`)
+    currentStep = `ML-KEM Decapsulate (PrivKey Len: ${privKeyBytes.length})`;
+    if (privKeyBytes.length !== 1184 && privKeyBytes.length !== 2400 && privKeyBytes.length !== 3168) {
+       return `[DIAGNOSTIC FATAL]: Invalid ML-KEM Private Key length: ${privKeyBytes.length}. Key is corrupted or encrypted.`;
+    }
     const secret = await mlKemObj.decapsulate(kemBytes, privKeyBytes);
+
+    currentStep = `Import Wrapping Key (Secret Len: ${secret?.length})`;
     const wrappingKey = await subtle.importKey("raw", secret, "AES-KW", false, ["unwrapKey"]);
+
+    currentStep = `Unwrap AES Key (Wrap Len: ${wrappedBytes.length})`;
     const aesKey = await subtle.unwrapKey(
       "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
     );
 
+    currentStep = `Decrypt Payload (Payload Len: ${payloadBytes.length})`;
     const iv = payloadBytes.slice(0, 12);
     const cipher = payloadBytes.slice(12);
     const decryptedBuffer = await subtle.decrypt({ name: "AES-GCM", iv }, aesKey, cipher);
 
-    // 5. Binary-Safe Text Decoding
+    currentStep = "Text Decoding";
     const decBytes = new Uint8Array(decryptedBuffer);
     try {
       return new TextDecoder("utf-8", { fatal: true }).decode(decBytes).replace(/\0+$/, '');
     } catch(e) {
-      let readable = "";
-      for (let i = 0; i < decBytes.length; i++) {
-        const char = String.fromCharCode(decBytes[i]);
-        if (/[a-zA-Z0-9\s.,!?'"{}[\]()\-:]/.test(char)) readable += char;
-      }
-      return `[Binary Payload]: ${readable.trim()}`;
+      return `[Binary Payload]: ` + Array.from(decBytes).slice(0, 20).map(b => b.toString(16)).join('');
     }
   } catch (err: any) {
-    console.error("🚨 SANDBOX DECRYPT CRASH 🚨", err);
-    return `Decryption Error: ${err.message || err.name}`;
+    return `Failed at Step: ${currentStep} | Error: ${err.message || err.name}`;
   }
 };
 
