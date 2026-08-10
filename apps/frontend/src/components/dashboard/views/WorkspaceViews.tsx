@@ -979,7 +979,20 @@ export const JuryDuties: React.FC = () => {
           });
         }
 
-        const rawItems = Array.isArray(response.data) ? response.data : [];
+        // Filter out tasks already voted on by this client
+        let votedHashes: string[] = [];
+        try {
+          const stored = localStorage.getItem("brone_voted_tasks");
+          if (stored) {
+            votedHashes = JSON.parse(stored);
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        const rawItems = Array.isArray(response.data)
+          ? response.data.filter((item: any) => !votedHashes.includes(item.ipfs_hash))
+          : [];
 
         // Strip telemetry, generate non-sequential keyHash by hashing text + salt (content-derived)
         const hydrated = rawItems.map((item: any) => {
@@ -1061,6 +1074,18 @@ export const JuryDuties: React.FC = () => {
         },
         withCredentials: false
       });
+
+      // Cache voted task locally
+      try {
+        const stored = localStorage.getItem("brone_voted_tasks");
+        const list = stored ? JSON.parse(stored) : [];
+        if (targetItem.ipfs_hash && !list.includes(targetItem.ipfs_hash)) {
+          list.push(targetItem.ipfs_hash);
+          localStorage.setItem("brone_voted_tasks", JSON.stringify(list));
+        }
+      } catch (e) {
+        // ignore
+      }
 
       // Memory Sanitization: Discard transient key and CID variables
       privKeyHex = null;

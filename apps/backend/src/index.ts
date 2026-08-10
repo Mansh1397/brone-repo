@@ -645,10 +645,12 @@ const handleVoteArbitration = async (req: any, res: any) => {
     }
 
     let verdict = "UNDECIDED";
-    if (logLikelihood >= 4.0) {
+    if (logLikelihood >= 1.0) {
       verdict = "APPROVED";
-    } else if (logLikelihood <= -4.0) {
+      await pool.query("UPDATE decentralized_posts SET status = 'APPROVED' WHERE ipfs_hash = $1", [ipfs_hash]);
+    } else if (logLikelihood <= -1.0) {
       verdict = "REJECTED";
+      await pool.query("UPDATE decentralized_posts SET status = 'REJECTED' WHERE ipfs_hash = $1", [ipfs_hash]);
     }
 
     console.log(`[SPRT EVALUATION] IPFS Hash: ${ipfs_hash}, Log-Likelihood: ${logLikelihood}, Verdict: ${verdict}`);
