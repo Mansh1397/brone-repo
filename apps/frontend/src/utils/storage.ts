@@ -148,6 +148,64 @@ export async function encryptAndSaveState(state: any): Promise<void> {
   local.setItem('brone_secure_vault', transportString);
 }
 
+const hexToBytes = (hex: string): Uint8Array => {
+  const cleanHex = hex.replace(/^(ENC_GCM:|0x)/, '');
+  const bytes = new Uint8Array(Math.ceil(cleanHex.length / 2));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+};
+
+const base64ToBytes = (base64: string): Uint8Array => {
+  const binaryString = safeAtob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+};
+
+export const decryptStoragePayload = async (encryptedData: string | any, encryptionKey: CryptoKey): Promise<Uint8Array> => {
+  try {
+    let rawBytes: Uint8Array;
+    
+    // Handle different storage formats (JSON object vs concatenated string)
+    let ivBytes: Uint8Array;
+    let cipherBytes: Uint8Array;
+
+    if (typeof encryptedData === 'string') {
+      const cleanVault = encryptedData.trim();
+      // If stored as a single string, assume Hex or Base64 and slice the 12-byte IV
+      rawBytes = /^[0-9a-fA-F]+$/.test(cleanVault) ? hexToBytes(cleanVault) : base64ToBytes(cleanVault);
+      ivBytes = rawBytes.slice(0, 12);
+      cipherBytes = rawBytes.slice(12);
+    } else if (encryptedData && encryptedData.iv && encryptedData.ciphertext) {
+      // If stored as a JSON object
+      ivBytes = typeof encryptedData.iv === 'string' ? hexToBytes(encryptedData.iv) : new Uint8Array(encryptedData.iv);
+      cipherBytes = typeof encryptedData.ciphertext === 'string' ? hexToBytes(encryptedData.ciphertext) : new Uint8Array(encryptedData.ciphertext);
+    } else {
+      throw new Error("Invalid storage payload format.");
+    }
+
+    if (ivBytes.length !== 12) {
+      throw new Error(`Invalid IV length: ${ivBytes.length}. Expected 12.`);
+    }
+
+    const cryptoObj = getCrypto();
+    const decryptedBuffer = await cryptoObj.subtle.decrypt(
+      { name: "AES-GCM", iv: ivBytes },
+      encryptionKey,
+      cipherBytes
+    );
+
+    return new Uint8Array(decryptedBuffer);
+  } catch (err: any) {
+    console.error("🚨 LOCAL VAULT DECRYPT CRASH 🚨", err);
+    throw new Error(`decryptStoragePayload failed: ${err.message || 'OperationError'}`);
+  }
+};
+
 /**
  * 3. ROBUST DECRYPTION & TAMPER-DETECTION ENGINE
  * Loads, verifies, and decrypts the state from localStorage.
@@ -164,43 +222,11 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
   }
 
   try {
-    const cryptoInstance = getCrypto();
-    
-    // Support decoding both Hex and Base64 encoded vault data robustly
-    let combinedBytes: Uint8Array;
-    const cleanVault = vaultData.trim();
-    if (/^[0-9a-fA-F]+$/.test(cleanVault)) {
-      const bytes = new Uint8Array(Math.ceil(cleanVault.length / 2));
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(cleanVault.substring(i * 2, i * 2 + 2), 16);
-      }
-      combinedBytes = bytes;
-    } else {
-      combinedBytes = base64ToArrayBuffer(cleanVault);
-    }
-
-    if (combinedBytes.length < 12) {
-      throw new Error('Corrupted storage payload: length is insufficient.');
-    }
-
-    // Isolate the 12-byte IV and the ciphertext as clean Uint8Arrays
-    const iv = new Uint8Array(combinedBytes.slice(0, 12));
-    const ciphertext = new Uint8Array(combinedBytes.slice(12));
-
     const key = await getOrCreateStorageKey();
-
-    // Decrypt (AES-GCM validates the authentication tag automatically)
-    const plaintextBuffer = await cryptoInstance.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: iv,
-      },
-      key,
-      ciphertext
-    );
+    const decryptedBytes = await decryptStoragePayload(vaultData, key);
 
     // Decode and parse JS state object
-    const decryptedString = new TextDecoder().decode(plaintextBuffer);
+    const decryptedString = new TextDecoder().decode(decryptedBytes);
     return JSON.parse(decryptedString);
   } catch (error) {
     // 4. FAIL-SAFE PURGE BOUNDARIES

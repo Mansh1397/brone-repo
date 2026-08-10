@@ -80,8 +80,7 @@ const encryptPayload = async (text: string): Promise<string> => {
 };
 
 // 3. Decrypt ciphertext payload using local storage key (AES-GCM)
-// 3. Decrypt ciphertext payload using local storage key (AES-GCM)
-const decryptStoragePayload = async (encryptedStr: string): Promise<string> => {
+const decryptPostWithStorageKey = async (encryptedStr: string): Promise<string> => {
   if (!encryptedStr.startsWith("ENC_GCM:")) {
     throw new Error("Invalid payload format");
   }
@@ -346,7 +345,7 @@ const decryptPayloadForJuror = async (
     }
   }
 
-  return await decryptStoragePayload(encryptedStr);
+  return await decryptPostWithStorageKey(encryptedStr);
 };
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
