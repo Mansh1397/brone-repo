@@ -9,7 +9,7 @@ import {
   RSAPublicKey
 } from "@brone/crypto-core";
 import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
-import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState, decryptStoragePayload, getJurorPrivateKey } from "../../../utils/storage";
+import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState, decryptStoragePayload, decryptJurorKey } from "../../../utils/storage";
 import { uploadToIPFS } from "../../../utils/ipfsService";
 import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
 import crypto from "crypto";
@@ -135,15 +135,13 @@ export const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: a
         const text = new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, '');
         return text;
     } catch (e) {
-        // If it's a binary/compressed payload causing garbled text, strip non-printable characters safely
+        // If the payload was compressed binary, extract human-readable characters
         let readable = "";
         for (let i = 0; i < decryptedBytes.length; i++) {
             const char = String.fromCharCode(decryptedBytes[i]);
-            if (/[a-zA-Z0-9\s.,!?'"{}[\]()\-:]/.test(char)) {
-                readable += char;
-            }
+            if (/[a-zA-Z0-9\s.,!?'"{}[\]()\-:]/.test(char)) readable += char;
         }
-        return `[Recovered Binary Text]: ${readable.trim()}`;
+        return `[Recovered Text]: ${readable.trim()}`;
     }
   } catch (err: any) {
     console.error(`🚨 CRASH AT: ${currentStep}`, err);
@@ -411,40 +409,6 @@ const decryptSelfPostPayload = async (encryptedStr: string): Promise<string> => 
   }
 };
 
-const getLocalPrivateKeyBytes = (rawStorageValue: string | null | any): Uint8Array => {
-  if (!rawStorageValue) throw new Error("No private key found in storage.");
-  
-  let parsed = rawStorageValue;
-  if (typeof rawStorageValue === 'string') {
-    try { parsed = JSON.parse(rawStorageValue); } catch(e) {}
-  }
-  
-  if (parsed && typeof parsed === 'object') {
-    const possibleKey = parsed.pqKemPrivateKeyHex || parsed.kemPrivateKeyHex || parsed.kem_private_key || parsed.privateKey;
-    if (possibleKey) {
-      parsed = possibleKey;
-    }
-  }
-
-  if (parsed instanceof Uint8Array) return parsed;
-  if (Array.isArray(parsed)) return new Uint8Array(parsed);
-  if (parsed.data && Array.isArray(parsed.data)) return new Uint8Array(parsed.data);
-  if (typeof parsed === 'string') {
-    const cleanStr = parsed.replace(/^(ENC_GCM:|0x)/, '').trim();
-    // If Hex:
-    if (/^[0-9a-fA-F]+$/.test(cleanStr)) {
-      const bytes = new Uint8Array(Math.ceil(cleanStr.length / 2));
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(cleanStr.substring(i * 2, i * 2 + 2), 16);
-      }
-      return bytes;
-    }
-    // If Base64:
-    try { return new Uint8Array(Array.from(window.atob(cleanStr)).map(c => c.charCodeAt(0))); } catch(e) {}
-  }
-  throw new Error("Failed to decode local private key into Uint8Array.");
-};
-
 const decryptPayloadForJuror = async (
   encryptedStr: string,
   ringSignature: any,
@@ -470,17 +434,13 @@ const decryptPayloadForJuror = async (
           encrypted_payload: encryptedStr
         };
 
-        const rawStorageVal = localStorage.getItem('kem_private_key') || 
+        const rawStorageVal = localStorage.getItem('brone_secure_vault') || 
+                              localStorage.getItem('kem_private_key') || 
                               localStorage.getItem('pqKemPrivateKeyHex') || 
                               (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
         
-        let privKeyBytes: Uint8Array;
-        if (rawStorageVal) {
-          privKeyBytes = getLocalPrivateKeyBytes(rawStorageVal);
-        } else {
-          const decryptedState = await loadAndDecryptState(true);
-          privKeyBytes = getLocalPrivateKeyBytes(decryptedState);
-        }
+        const storageKey = await getOrCreateStorageKey();
+        const privKeyBytes = await decryptJurorKey(rawStorageVal, storageKey);
 
         return await decryptPostWithStorageKey(task, privKeyBytes);
       } catch (err: any) {
