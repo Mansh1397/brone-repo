@@ -220,16 +220,42 @@ const decryptPayloadForJuror = async (
           ["unwrapKey"]
         );
 
-        // 2. Unwrap the AES-GCM key
-        const unwrappedAesKey = await window.crypto.subtle.unwrapKey(
-          "raw",
-          wrappedKeyBytes,
-          wrappingKey,
-          "AES-KW",
-          { name: "AES-GCM", length: 256 },
-          true,
-          ["decrypt"]
-        );
+        let unwrappedAesKey: CryptoKey | null = null;
+        try {
+          // Attempt 1: AES-KW (Standard Key Wrap, no IV required)
+          unwrappedAesKey = await window.crypto.subtle.unwrapKey(
+            "raw",
+            wrappedKeyBytes,
+            wrappingKey,
+            "AES-KW",
+            { name: "AES-GCM", length: 256 },
+            true,
+            ["decrypt"]
+          );
+        } catch (e1) {
+          console.warn("AES-KW unwrap failed, attempting AES-GCM fallback...");
+          try {
+            // Attempt 2: AES-GCM Fallback (Requires importing the secret as AES-GCM)
+            const gcmWrappingKey = await window.crypto.subtle.importKey(
+              "raw",
+              sharedSecret,
+              "AES-GCM",
+              false,
+              ["unwrapKey"]
+            );
+            unwrappedAesKey = await window.crypto.subtle.unwrapKey(
+              "raw",
+              wrappedKeyBytes,
+              gcmWrappingKey,
+              { name: "AES-GCM", iv: new Uint8Array(12) },
+              { name: "AES-GCM", length: 256 },
+              true,
+              ["decrypt"]
+            );
+          } catch (e2) {
+            throw new Error(`Unwrap failed for both AES-KW and AES-GCM. Secret length: ${sharedSecret.length}, Wrapped length: ${wrappedKeyBytes.length}`);
+          }
+        }
 
         // 3. Export the unwrapped key to raw bytes for decryptPayloadWithKey
         const rawAesKeyBuffer = await window.crypto.subtle.exportKey("raw", unwrappedAesKey);
