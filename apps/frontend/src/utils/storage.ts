@@ -166,20 +166,32 @@ const base64ToBytes = (base64: string): Uint8Array => {
   return bytes;
 };
 
-export const decryptStoragePayload = async (encryptedData: string | any, encryptionKey: CryptoKey): Promise<Uint8Array> => {
+export const decryptStoragePayload = async (encryptedData: any, encryptionKey: CryptoKey): Promise<Uint8Array> => {
   try {
-    let rawBytes: Uint8Array;
+    let parsedData = encryptedData;
     
-    // Handle different storage formats (JSON object vs concatenated string)
+    // 1. If it's a string, try to parse it as JSON first
+    if (typeof encryptedData === 'string') {
+      try {
+        parsedData = JSON.parse(encryptedData);
+      } catch (e) {
+        // It's not JSON, so it must be a raw Hex/Base64 string
+        parsedData = encryptedData;
+      }
+    }
+
     let ivBytes: Uint8Array;
     let cipherBytes: Uint8Array;
 
-    if (typeof encryptedData === 'string') {
-      const cleanStr = encryptedData.replace(/^(ENC_GCM:|0x)/, '').trim();
+    // 2. Extract IV and Ciphertext based on the format
+    if (typeof parsedData === 'string') {
+      // It's a concatenated string (Hex or Base64)
+      const cleanStr = parsedData.replace(/^(ENC_GCM:|0x)/, '').trim();
       const isHex = /^[0-9a-fA-F]+$/.test(cleanStr);
+      let rawBytes: Uint8Array;
 
       if (isHex) {
-        rawBytes = hexToBytes(encryptedData);
+        rawBytes = hexToBytes(parsedData);
       } else {
         try {
           rawBytes = base64ToBytes(cleanStr);
@@ -189,18 +201,19 @@ export const decryptStoragePayload = async (encryptedData: string | any, encrypt
       }
       ivBytes = rawBytes.slice(0, 12);
       cipherBytes = rawBytes.slice(12);
-    } else if (encryptedData && encryptedData.iv && encryptedData.ciphertext) {
-      // If stored as a JSON object
-      ivBytes = typeof encryptedData.iv === 'string' ? hexToBytes(encryptedData.iv) : new Uint8Array(encryptedData.iv);
-      cipherBytes = typeof encryptedData.ciphertext === 'string' ? hexToBytes(encryptedData.ciphertext) : new Uint8Array(encryptedData.ciphertext);
+    } else if (parsedData && parsedData.iv && parsedData.ciphertext) {
+      // It's a JSON Object
+      ivBytes = typeof parsedData.iv === 'string' ? hexToBytes(parsedData.iv) : new Uint8Array(parsedData.iv);
+      cipherBytes = typeof parsedData.ciphertext === 'string' ? hexToBytes(parsedData.ciphertext) : new Uint8Array(parsedData.ciphertext);
     } else {
-      throw new Error("Invalid storage payload format.");
+      throw new Error("Unrecognized local vault storage format: " + JSON.stringify(parsedData));
     }
 
     if (ivBytes.length !== 12) {
       throw new Error(`Invalid IV length: ${ivBytes.length}. Expected 12.`);
     }
 
+    // 3. Decrypt the local vault
     const cryptoObj = getCrypto();
     const decryptedBuffer = await cryptoObj.subtle.decrypt(
       { name: "AES-GCM", iv: ivBytes },
@@ -211,7 +224,7 @@ export const decryptStoragePayload = async (encryptedData: string | any, encrypt
     return new Uint8Array(decryptedBuffer);
   } catch (err: any) {
     console.error("🚨 LOCAL VAULT DECRYPT CRASH 🚨", err);
-    throw new Error(`decryptStoragePayload failed: ${err.message || 'OperationError'}`);
+    throw new Error(`decryptStoragePayload failed: ${err.message || 'OperationError'} \nStack: ${err.stack}`);
   }
 };
 
