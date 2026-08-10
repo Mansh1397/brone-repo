@@ -557,8 +557,8 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
         "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
       );
     } catch (unwrapErr: any) {
-      // If the KEM bytes are not exactly 768, 1088, 1184, or 1568 (depending on the Kyber level), the database is corrupting the data!
-      return `🔒 Locked (Mismatch) | KEM Payload Size: ${kemBytes.length} bytes | Expected: ~1088 or 1568 bytes`;
+      const keyFingerprint = Array.from(privKeyBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
+      return `🔒 Locked (Mismatch) | KEM Size: ${kemBytes.length} | My Key Fingerprint: ${keyFingerprint}`;
     }
 
     currentStep = `Decrypt Payload (Payload Len: ${payloadBytes.length})`;
@@ -785,18 +785,41 @@ const getOrCreateKeyPair = async (): Promise<{
   const cached = (window as any).__brone_keypair;
   if (cached && cached.dsaPrivateKey && cached.kemPrivateKey) return cached;
 
+  // 1. Check storage FIRST before generating new ML-KEM keys
+  const existingPriv = localStorage.getItem('pq_kem_private_key');
+  const existingPub = localStorage.getItem('pq_kem_public_key');
+  const existingDsaPriv = localStorage.getItem('pq_dsa_private_key');
+
+  if (existingPriv && existingPub && existingDsaPriv) {
+    console.log("[ZK IDENTITY] Skipping key generation, loading from storage.");
+    const dsaPrivateKey = hexToBytes(existingDsaPriv);
+    const kemPrivateKey = hexToBytes(existingPriv);
+    const keypairObj = {
+      privateKey: dsaPrivateKey,
+      dsaPrivateKey,
+      kemPrivateKey,
+      publicKeyHex: existingPub
+    };
+    (window as any).__brone_keypair = keypairObj;
+    return keypairObj;
+  }
+
   let stored = null;
   try {
     stored = await loadAndDecryptState(true);
   } catch (err) {
     console.error("🚨 LOCAL VAULT DECRYPTION CRASH 🚨", err);
-    throw new Error(`Local KeyPair resolution failed: ${err instanceof Error ? err.message : 'OperationError'}`);
   }
 
   if (stored && stored.pqDsaPrivateKeyHex && stored.pqKemPrivateKeyHex && stored.pqPublicKeyHex) {
     const dsaPrivateKey = hexToBytes(stored.pqDsaPrivateKeyHex);
     const kemPrivateKey = hexToBytes(stored.pqKemPrivateKeyHex);
     if (dsaPrivateKey.length === 4896 && kemPrivateKey.length === 3168) {
+      // Pin to localStorage for absolute persistence
+      localStorage.setItem('pq_kem_private_key', stored.pqKemPrivateKeyHex);
+      localStorage.setItem('pq_kem_public_key', stored.pqPublicKeyHex);
+      localStorage.setItem('pq_dsa_private_key', stored.pqDsaPrivateKeyHex);
+
       const keypairObj = {
         privateKey: dsaPrivateKey,
         dsaPrivateKey,
@@ -822,15 +845,23 @@ const getOrCreateKeyPair = async (): Promise<{
     publicKeyHex
   };
 
+  const dsaPrivHex = uint8ArrayToHex(dsaKeys.secretKey);
+  const kemPrivHex = uint8ArrayToHex(kemKeys.secretKey);
+
+  // Pin to localStorage for absolute persistence
+  localStorage.setItem('pq_kem_private_key', kemPrivHex);
+  localStorage.setItem('pq_kem_public_key', publicKeyHex);
+  localStorage.setItem('pq_dsa_private_key', dsaPrivHex);
+
   if (stored) {
-    stored.pqDsaPrivateKeyHex = uint8ArrayToHex(dsaKeys.secretKey);
-    stored.pqKemPrivateKeyHex = uint8ArrayToHex(kemKeys.secretKey);
+    stored.pqDsaPrivateKeyHex = dsaPrivHex;
+    stored.pqKemPrivateKeyHex = kemPrivHex;
     stored.pqPublicKeyHex = publicKeyHex;
     await encryptAndSaveState(stored);
   } else {
     await encryptAndSaveState({
-      pqDsaPrivateKeyHex: uint8ArrayToHex(dsaKeys.secretKey),
-      pqKemPrivateKeyHex: uint8ArrayToHex(kemKeys.secretKey),
+      pqDsaPrivateKeyHex: dsaPrivHex,
+      pqKemPrivateKeyHex: kemPrivHex,
       pqPublicKeyHex: publicKeyHex
     });
   }
