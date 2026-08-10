@@ -413,7 +413,8 @@ const handleGetArbitration = async (req: any, res: any) => {
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
-    const { ipfs_hash, geohash, ring_signature, encrypted_payload } = req.body;
+    const { ipfs_hash, geohash, ring_signature } = req.body;
+    const encrypted_payload = req.body.encrypted_payload || req.body.payload || '';
 
     if (encrypted_payload) {
       mockEncryptedData[ipfs_hash] = encrypted_payload;
@@ -632,11 +633,11 @@ const handleVoteArbitration = async (req: any, res: any) => {
       values: [ipfs_hash, vote_decision]
     });
 
-    // 6. Execute 60/75 Quorum threshold evaluation
+    // 6. Execute 60/50 Quorum threshold evaluation
     const activeUsersRes = await pool.query("SELECT COUNT(*) as count FROM anonymous_public_keys");
     const total_active_users_in_geo = parseInt(activeUsersRes.rows[0]?.count || "0", 10);
     const pool_size = Math.max(3, Math.ceil(total_active_users_in_geo * 0.60)); 
-    const required_approvals = Math.ceil(pool_size * 0.75);
+    const required_approvals = Math.ceil(pool_size * 0.50);
     const max_rejections = pool_size - required_approvals;
 
     const approvalsRes = await pool.query("SELECT COUNT(*) as count FROM anonymous_votes WHERE ipfs_hash = $1 AND vote_decision = 'UPHOLD'", [ipfs_hash]);
