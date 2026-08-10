@@ -82,29 +82,69 @@ const encryptPayload = async (text: string): Promise<string> => {
 
 const mlKem = ml_kem1024;
 
+const inlineHexToBytes = (hex: string): Uint8Array => {
+  if (!hex) return new Uint8Array();
+  const clean = hex.replace(/^(ENC_GCM:|0x)/, '').trim();
+  const bytes = new Uint8Array(Math.ceil(clean.length / 2));
+  for(let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.substring(i*2, i*2+2), 16);
+  return bytes;
+};
+
+const parseLocalJurorKey = async (rawStorage: any, masterKey?: CryptoKey): Promise<Uint8Array> => {
+  let parsed = rawStorage;
+  if (typeof rawStorage === 'string') {
+    try { parsed = JSON.parse(rawStorage); } catch(e) {}
+  }
+  
+  if (parsed instanceof Uint8Array) return parsed;
+  
+  // If it's a raw unencrypted hex string (common for ML-KEM keys in dev)
+  if (typeof parsed === 'string' && /^[0-9a-fA-F]+$/.test(parsed.replace(/^(ENC_GCM:|0x)/, ''))) {
+      return inlineHexToBytes(parsed);
+  }
+
+  // If it's an AES-GCM encrypted JSON object
+  if (parsed && parsed.iv && parsed.ciphertext && masterKey) {
+      const iv = typeof parsed.iv === 'string' ? inlineHexToBytes(parsed.iv) : new Uint8Array(parsed.iv);
+      const cipher = typeof parsed.ciphertext === 'string' ? inlineHexToBytes(parsed.ciphertext) : new Uint8Array(parsed.ciphertext);
+      const buffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, masterKey, cipher);
+      const decryptedBytes = new Uint8Array(buffer);
+      
+      try {
+        const text = new TextDecoder().decode(decryptedBytes);
+        if (text.startsWith('{')) {
+          const obj = JSON.parse(text);
+          const possibleKey = obj.pqKemPrivateKeyHex || obj.kemPrivateKeyHex || obj.kem_private_key || obj.privateKey;
+          if (possibleKey) {
+            return inlineHexToBytes(possibleKey);
+          }
+        }
+      } catch(err) {}
+      
+      return decryptedBytes;
+  }
+  
+  if (parsed && typeof parsed === 'object') {
+    const possibleKey = parsed.pqKemPrivateKeyHex || parsed.kemPrivateKeyHex || parsed.kem_private_key || parsed.privateKey;
+    if (possibleKey) {
+      return inlineHexToBytes(possibleKey);
+    }
+  }
+
+  throw new Error("Could not parse local juror key.");
+};
+
 export const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: any) => {
   let currentStep = "Initialization";
   try {
     currentStep = "Formatting Private Key";
-    let privKeyBytes: Uint8Array;
-    
-    // Safely extract the raw ML-KEM private key bytes without WebCrypto
-    if (localPrivateKeyRaw instanceof Uint8Array) {
-        privKeyBytes = localPrivateKeyRaw;
-    } else if (typeof localPrivateKeyRaw === 'string') {
-        privKeyBytes = hexToBytes(localPrivateKeyRaw);
-    } else if (localPrivateKeyRaw && localPrivateKeyRaw.data) {
-        privKeyBytes = new Uint8Array(localPrivateKeyRaw.data);
-    } else if (localPrivateKeyRaw && typeof localPrivateKeyRaw === 'object') {
-        privKeyBytes = new Uint8Array(Object.values(localPrivateKeyRaw));
-    } else {
-        throw new Error("Invalid private key format");
-    }
+    const storageKey = await getOrCreateStorageKey();
+    const privKeyBytes = await parseLocalJurorKey(localPrivateKeyRaw || localStorage.getItem('brone_secure_vault'), storageKey);
 
     currentStep = "Decoding Network Hex";
-    const kemBytes = hexToBytes(task.kem_ciphertext);
-    const wrappedKeyBytes = hexToBytes(task.wrapped_key);
-    const payloadBytes = hexToBytes(task.encrypted_payload);
+    const kemBytes = inlineHexToBytes(task.kem_ciphertext);
+    const wrappedKeyBytes = inlineHexToBytes(task.wrapped_key);
+    const payloadBytes = inlineHexToBytes(task.encrypted_payload);
 
     currentStep = "ML-KEM Decapsulation";
     // @ts-ignore - Assuming mlKem is available in scope
@@ -144,7 +184,7 @@ export const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: a
         return `[Recovered Text]: ${readable.trim()}`;
     }
   } catch (err: any) {
-    console.error(`🚨 CRASH AT: ${currentStep}`, err);
+    console.error(`🚨 ISOLATED JUROR CRASH 🚨 AT: ${currentStep}`, err);
     throw new Error(`Failed at Step: ${currentStep} | Error: ${err.message || err.name}`);
   }
 };
@@ -439,10 +479,7 @@ const decryptPayloadForJuror = async (
                               localStorage.getItem('pqKemPrivateKeyHex') || 
                               (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
         
-        const storageKey = await getOrCreateStorageKey();
-        const privKeyBytes = await decryptJurorKey(rawStorageVal, storageKey);
-
-        return await decryptPostWithStorageKey(task, privKeyBytes);
+        return await decryptPostWithStorageKey(task, rawStorageVal);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
         const errorMsg = err.message || String(err);
