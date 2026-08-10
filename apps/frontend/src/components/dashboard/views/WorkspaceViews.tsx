@@ -136,28 +136,26 @@ const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: Uint8Arr
       unwrappedAesKey,
       ciphertext
     );
-
-    const rawText = new TextDecoder().decode(decryptedBuffer).replace(/\0+$/, '');
     
-    // 1. Check if the plaintext is a JSON object (e.g. {"content": "my post"})
+    const decryptedBytes = new Uint8Array(decryptedBuffer);
+
     try {
-      const jsonObj = JSON.parse(rawText);
-      if (jsonObj && jsonObj.content) return jsonObj.content;
-      if (jsonObj && jsonObj.text) return jsonObj.text;
-      return JSON.stringify(jsonObj, null, 2); // Fallback: render the whole JSON nicely
+      const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, '');
+      
+      // If it contains typical JSON braces, parse it
+      if (utf8Text.startsWith('{') || utf8Text.startsWith('[')) {
+        try {
+          const jsonObj = JSON.parse(utf8Text);
+          return jsonObj.content || jsonObj.text || JSON.stringify(jsonObj, null, 2);
+        } catch(e) {}
+      }
+      return utf8Text;
     } catch (e) {
-      // Not JSON.
+      // If fatal: true catches a non-UTF8 binary payload, convert the bytes to Hex so it's readable
+      return Array.from(decryptedBytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
     }
-
-    // 2. Check if the plaintext is Base64 encoded
-    if (/^[A-Za-z0-9+/=]+$/.test(rawText.trim()) && rawText.length % 4 === 0) {
-      try {
-        return decodeURIComponent(escape(window.atob(rawText.trim())));
-      } catch (e) { /* Not base64 */ }
-    }
-
-    // 3. Fallback: Return raw text
-    return rawText;
 
   } catch (err: any) {
     console.error("🚨 POST DECRYPTION CRASH 🚨", err);
@@ -274,27 +272,26 @@ export const decryptPayload = async (task: any, localPrivateKeyRaw: Uint8Array |
         unwrappedAesKey,
         ciphertext
       );
-      const rawText = new TextDecoder().decode(decryptedBuffer).replace(/\0+$/, '');
       
-      // 1. Check if the plaintext is a JSON object (e.g. {"content": "my post"})
+      const decryptedBytes = new Uint8Array(decryptedBuffer);
+
       try {
-        const jsonObj = JSON.parse(rawText);
-        if (jsonObj && jsonObj.content) return jsonObj.content;
-        if (jsonObj && jsonObj.text) return jsonObj.text;
-        return JSON.stringify(jsonObj, null, 2); // Fallback: render the whole JSON nicely
+        const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, '');
+        
+        // If it contains typical JSON braces, parse it
+        if (utf8Text.startsWith('{') || utf8Text.startsWith('[')) {
+          try {
+            const jsonObj = JSON.parse(utf8Text);
+            return jsonObj.content || jsonObj.text || JSON.stringify(jsonObj, null, 2);
+          } catch(e) {}
+        }
+        return utf8Text;
       } catch (e) {
-        // Not JSON.
+        // If fatal: true catches a non-UTF8 binary payload, convert the bytes to Hex so it's readable
+        return Array.from(decryptedBytes)
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
       }
-
-      // 2. Check if the plaintext is Base64 encoded
-      if (/^[A-Za-z0-9+/=]+$/.test(rawText.trim()) && rawText.length % 4 === 0) {
-        try {
-          return decodeURIComponent(escape(window.atob(rawText.trim())));
-        } catch (e) { /* Not base64 */ }
-      }
-
-      // 3. Fallback: Return raw text
-      return rawText;
     } catch (err) {
       throw new Error(`Final Payload AES Decrypt failed: ${err}`);
     }
