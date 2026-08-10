@@ -202,8 +202,9 @@ const decryptPayloadForJuror = async (
         }
 
         return await decryptPayloadWithKey(encryptedStr, aesKey);
-      } catch (err) {
-        console.error("Failed to decapsulate or decrypt payload:", err);
+      } catch (err: any) {
+        console.warn("[DECRYPTION CRASH DETAIL]:", err);
+        return `[DECRYPTION FAILED]: ${err.message || JSON.stringify(err) || err.toString()}`;
       }
     }
   }
@@ -221,6 +222,12 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
     const fetchAndDecrypt = async () => {
       try {
         if (task) {
+          console.warn("[DECRYPTION ATTEMPT DATA]:", {
+            hasKemCiphertext: !!task.kem_ciphertext,
+            kemLength: task.kem_ciphertext?.length,
+            hasEncryptedPayload: !!task.encrypted_payload,
+            payloadPrefix: task.encrypted_payload?.substring(0, 15)
+          });
           const payload = task.encrypted_payload;
           if (payload && payload.startsWith("ENC_GCM:")) {
             const myKeys = await getOrCreateKeyPair();
@@ -228,7 +235,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
             if (active) setText(decrypted);
           } else {
             console.warn("[RENDER CHECK] Payload starts with ENC_GCM?:", task.encrypted_payload?.startsWith("ENC_GCM:"), "Actual payload string:", task.encrypted_payload?.substring(0, 30));
-            if (active) setText(payload || fallbackText || "Payload Encrypted - Missing Shard Credentials");
+            if (active) setText(payload || fallbackText || `[DECRYPTION FAILED]: Payload missing or fails GCM check.`);
           }
           return;
         }
@@ -240,10 +247,11 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           const decrypted = await decryptPayloadForJuror(payload, response.data.ring_signature, myKeys);
           if (active) setText(decrypted);
         } else {
-          if (active) setText(payload || fallbackText || "Payload Encrypted - Missing Shard Credentials");
+          if (active) setText(payload || fallbackText || `[DECRYPTION FAILED]: Payload missing or fails GCM check.`);
         }
-      } catch (err) {
-        if (active) setText("Payload Encrypted - Missing Shard Credentials");
+      } catch (err: any) {
+        console.warn("[DECRYPTION CRASH DETAIL]:", err);
+        if (active) setText(`[DECRYPTION FAILED]: ${err.message || JSON.stringify(err) || err.toString()}`);
       } finally {
         if (active) setLoading(false);
       }

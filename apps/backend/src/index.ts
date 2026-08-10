@@ -414,10 +414,10 @@ const handleGetArbitration = async (req: any, res: any) => {
 const handlePostArbitration = async (req: any, res: any) => {
   try {
     const { ipfs_hash, geohash, ring_signature } = req.body;
-    const encrypted_payload = req.body.encrypted_payload || req.body.payload || '';
+    const payload = req.body.encrypted_payload || req.body.payload || '';
 
-    if (encrypted_payload) {
-      mockEncryptedData[ipfs_hash] = encrypted_payload;
+    if (payload) {
+      mockEncryptedData[ipfs_hash] = payload;
     }
 
     // 1. Ingestion presence checks
@@ -501,7 +501,7 @@ const handlePostArbitration = async (req: any, res: any) => {
         VALUES ($1, $2, $3, $4, $5, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
         ON CONFLICT (ipfs_hash) DO UPDATE SET encrypted_payload = EXCLUDED.encrypted_payload, author_pubkey = EXCLUDED.author_pubkey;
       `,
-      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), encrypted_payload, authorPubkey]
+      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), payload, authorPubkey]
     });
 
     return res.status(201).json({
