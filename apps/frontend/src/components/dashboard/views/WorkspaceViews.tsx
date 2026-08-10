@@ -211,12 +211,31 @@ const decryptPayloadForJuror = async (
 
         const sharedSecret = ml_kem1024.decapsulate(kemCiphertextBytes, myKeys.kemPrivateKey);
 
-        const aesKey = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) {
-          aesKey[i] = wrappedKeyBytes[i] ^ sharedSecret[i];
-        }
+        // 1. Import the shared secret as an AES-KW key
+        const wrappingKey = await window.crypto.subtle.importKey(
+          "raw",
+          sharedSecret,
+          "AES-KW",
+          false,
+          ["unwrapKey"]
+        );
 
-        return await decryptPayloadWithKey(encryptedStr, aesKey);
+        // 2. Unwrap the AES-GCM key
+        const unwrappedAesKey = await window.crypto.subtle.unwrapKey(
+          "raw",
+          wrappedKeyBytes,
+          wrappingKey,
+          "AES-KW",
+          { name: "AES-GCM", length: 256 },
+          true,
+          ["decrypt"]
+        );
+
+        // 3. Export the unwrapped key to raw bytes for decryptPayloadWithKey
+        const rawAesKeyBuffer = await window.crypto.subtle.exportKey("raw", unwrappedAesKey);
+        const aesKeyBytes = new Uint8Array(rawAesKeyBuffer);
+
+        return await decryptPayloadWithKey(encryptedStr, aesKeyBytes);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
         const errorMsg = err instanceof Error || (err && err.name)
@@ -923,14 +942,38 @@ export const ReportingHub: React.FC = () => {
         try {
           const jurorPubKeyBytes = hexToBytes(kemPubHex);
           const { cipherText, sharedSecret } = ml_kem1024.encapsulate(jurorPubKeyBytes);
-          const wrappedKey = new Uint8Array(32);
-          for (let j = 0; j < 32; j++) {
-            wrappedKey[j] = aesKey[j] ^ sharedSecret[j];
-          }
+          // 1. Import the post-quantum shared secret as an AES-KW key
+          const wrappingKey = await window.crypto.subtle.importKey(
+            "raw",
+            sharedSecret,
+            "AES-KW",
+            false,
+            ["wrapKey"]
+          );
+
+          // 2. Import the raw AES key to be wrapped
+          const aesKeyToWrap = await window.crypto.subtle.importKey(
+            "raw",
+            aesKey,
+            "AES-GCM",
+            true,
+            ["decrypt"]
+          );
+
+          // 3. Wrap the AES key using AES-KW
+          const wrappedKeyBuffer = await window.crypto.subtle.wrapKey(
+            "raw",
+            aesKeyToWrap,
+            wrappingKey,
+            "AES-KW"
+          );
+
+          const wrappedKeyBytes = new Uint8Array(wrappedKeyBuffer);
+
           encapsulations.push({
             juror_id: jurorId,
             kem_ciphertext: uint8ArrayToHex(cipherText),
-            wrapped_key: uint8ArrayToHex(wrappedKey)
+            wrapped_key: uint8ArrayToHex(wrappedKeyBytes)
           });
         } catch (err) {
           console.warn("Failed KEM encapsulation for juror:", jurorId, err);
