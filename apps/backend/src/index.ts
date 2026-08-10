@@ -636,7 +636,7 @@ const handleVoteArbitration = async (req: any, res: any) => {
     // 6. Execute 60/50 Quorum threshold evaluation
     const activeUsersRes = await pool.query("SELECT COUNT(*) as count FROM anonymous_public_keys");
     const total_active_users_in_geo = parseInt(activeUsersRes.rows[0]?.count || "0", 10);
-    const pool_size = Math.max(3, Math.ceil(total_active_users_in_geo * 0.60)); 
+    const pool_size = Math.max(2, Math.ceil(total_active_users_in_geo * 0.60)); 
     const required_approvals = Math.ceil(pool_size * 0.50);
     const max_rejections = pool_size - required_approvals;
 

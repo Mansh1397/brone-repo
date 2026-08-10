@@ -204,7 +204,10 @@ const decryptPayloadForJuror = async (
         return await decryptPayloadWithKey(encryptedStr, aesKey);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        return `[DECRYPTION FAILED]: ${err.message || JSON.stringify(err) || err.toString()}`;
+        const errorMsg = err instanceof Error || (err && err.name)
+          ? `${err.name || 'Error'}: ${err.message || err}`
+          : (err.message || JSON.stringify(err) || err.toString());
+        return `[DECRYPTION FAILED]: ${errorMsg}`;
       }
     }
   }
@@ -214,7 +217,7 @@ const decryptPayloadForJuror = async (
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
 const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?: any }> = ({ ipfsHash, fallbackText, task }) => {
-  const [text, setText] = useState<string | null>(null);
+  const [text, setText] = useState<React.ReactNode | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -232,7 +235,21 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           if (payload && payload.startsWith("ENC_GCM:")) {
             const myKeys = await getOrCreateKeyPair();
             const decrypted = await decryptPayloadForJuror(payload, task.ring_signature, myKeys);
-            if (active) setText(decrypted);
+            if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
+              const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
+              if (active) {
+                setText(
+                  <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
+                    <h4>🚨 DECRYPTION CRASH 🚨</h4>
+                    <p><strong>Error:</strong> {errorMsg}</p>
+                    <p><strong>KEM Ciphertext:</strong> {task.kem_ciphertext ? task.kem_ciphertext.substring(0, 50) + '...' : 'MISSING'}</p>
+                    <p><strong>Encrypted Payload:</strong> {task.encrypted_payload ? task.encrypted_payload.substring(0, 50) + '...' : 'MISSING'}</p>
+                  </div>
+                );
+              }
+            } else {
+              if (active) setText(decrypted);
+            }
           } else {
             console.warn("[RENDER CHECK] Payload starts with ENC_GCM?:", task.encrypted_payload?.startsWith("ENC_GCM:"), "Actual payload string:", task.encrypted_payload?.substring(0, 30));
             if (active) setText(payload || fallbackText || `[DECRYPTION FAILED]: Payload missing or fails GCM check.`);
@@ -245,13 +262,39 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
         if (payload && payload.startsWith("ENC_GCM:")) {
           const myKeys = await getOrCreateKeyPair();
           const decrypted = await decryptPayloadForJuror(payload, response.data.ring_signature, myKeys);
-          if (active) setText(decrypted);
+          if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
+            const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
+            if (active) {
+              setText(
+                <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
+                  <h4>🚨 DECRYPTION CRASH 🚨</h4>
+                  <p><strong>Error:</strong> {errorMsg}</p>
+                  <p><strong>KEM Ciphertext:</strong> {response.data.kem_ciphertext ? response.data.kem_ciphertext.substring(0, 50) + '...' : 'MISSING'}</p>
+                  <p><strong>Encrypted Payload:</strong> {payload ? payload.substring(0, 50) + '...' : 'MISSING'}</p>
+                </div>
+              );
+            }
+          } else {
+            if (active) setText(decrypted);
+          }
         } else {
           if (active) setText(payload || fallbackText || `[DECRYPTION FAILED]: Payload missing or fails GCM check.`);
         }
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        if (active) setText(`[DECRYPTION FAILED]: ${err.message || JSON.stringify(err) || err.toString()}`);
+        const errorMsg = err instanceof Error || (err && err.name)
+          ? `${err.name || 'Error'}: ${err.message || err}`
+          : (err.message || JSON.stringify(err) || err.toString());
+        if (active) {
+          setText(
+            <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
+              <h4>🚨 DECRYPTION CRASH 🚨</h4>
+              <p><strong>Error:</strong> {errorMsg}</p>
+              <p><strong>KEM Ciphertext:</strong> {task?.kem_ciphertext ? task.kem_ciphertext.substring(0, 50) + '...' : 'MISSING'}</p>
+              <p><strong>Encrypted Payload:</strong> {task?.encrypted_payload ? task.encrypted_payload.substring(0, 50) + '...' : 'MISSING'}</p>
+            </div>
+          );
+        }
       } finally {
         if (active) setLoading(false);
       }
