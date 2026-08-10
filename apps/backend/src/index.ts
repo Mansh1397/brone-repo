@@ -735,10 +735,20 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const posts = result.rows.map((row: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
       let kem_ciphertext = "";
-      if (ringSig && Array.isArray(ringSig.encapsulations) && ringSig.encapsulations.length > 0) {
-        const matchingEnc = ringSig.encapsulations.find((e: any) => e.juror_id === jurorId);
-        kem_ciphertext = matchingEnc ? matchingEnc.kem_ciphertext : (ringSig.encapsulations[0].kem_ciphertext || "");
+
+      const encapsulations = row.encapsulations || row.keys || ringSig?.encapsulations || ringSig?.keys || [];
+
+      if (Array.isArray(encapsulations) && encapsulations.length > 0) {
+        const matchingEnc = encapsulations.find((e: any) => e.juror_id === jurorId);
+        kem_ciphertext = matchingEnc 
+          ? (matchingEnc.kem_ciphertext || matchingEnc.ciphertext || "") 
+          : (encapsulations[0].kem_ciphertext || encapsulations[0].ciphertext || "");
+      } else if (typeof row.kem_ciphertext === 'string') {
+        kem_ciphertext = row.kem_ciphertext;
+      } else if (ringSig && typeof ringSig.kem_ciphertext === 'string') {
+        kem_ciphertext = ringSig.kem_ciphertext;
       }
+
       return {
         id: row.ipfs_hash,
         ipfs_hash: row.ipfs_hash || "",
@@ -749,6 +759,8 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
         created_at: row.submitted_at
       };
     });
+
+    console.warn("[OUTGOING JURY TASKS]:", posts.map(t => ({ id: t.ipfs_hash, hasKem: !!t.kem_ciphertext, hasPayload: !!t.encrypted_payload })));
 
     return res.status(200).json(posts);
   } catch (error) {
