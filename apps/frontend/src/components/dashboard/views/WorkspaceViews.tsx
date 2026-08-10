@@ -503,6 +503,13 @@ const decryptPayloadForJuror = async (
 // 4. React component to fetch and decrypt IPFS descriptions client-side
 const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: any) => {
   try {
+    // GUARD: Ensure we are in the browser and WebCrypto exists
+    if (typeof window === 'undefined') return "Loading secure context...";
+    if (!window.crypto || !window.crypto.subtle) {
+      throw new Error("WebCrypto API is not available (requires HTTPS and Browser context).");
+    }
+    const subtle = window.crypto.subtle;
+
     // 1. Hex Decoder
     const hexToBytes = (hexStr: string) => {
       const clean = hexStr.replace(/^(ENC_GCM:|0x)/, '').trim();
@@ -511,7 +518,7 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
       return bytes;
     };
 
-    // 2. Safe Private Key Parsing (Handles Hex, Arrays, or Objects)
+    // 2. Safe Private Key Parsing
     let privKeyBytes: Uint8Array;
     if (localPrivKeyRaw instanceof Uint8Array) {
       privKeyBytes = localPrivKeyRaw;
@@ -523,7 +530,7 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
         privKeyBytes = hexToBytes(localPrivKeyRaw);
       }
     } else {
-      privKeyBytes = new Uint8Array(Object.values(localPrivKeyRaw));
+      privKeyBytes = new Uint8Array(Object.values(localPrivKeyRaw || {}));
     }
 
     // 3. Network Payload Parsing
@@ -531,24 +538,22 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
     const wrappedBytes = hexToBytes(task.wrapped_key);
     const payloadBytes = hexToBytes(task.encrypted_payload);
 
-    // 4. Cryptographic Pipeline
+    // 4. Cryptographic Pipeline (Using explicitly bound `subtle`)
     const secret = await mlKemObj.decapsulate(kemBytes, privKeyBytes);
-    const wrappingKey = await crypto.subtle.importKey("raw", secret, "AES-KW", false, ["unwrapKey"]);
-    const aesKey = await crypto.subtle.unwrapKey(
+    const wrappingKey = await subtle.importKey("raw", secret, "AES-KW", false, ["unwrapKey"]);
+    const aesKey = await subtle.unwrapKey(
       "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
     );
 
     const iv = payloadBytes.slice(0, 12);
     const cipher = payloadBytes.slice(12);
-    const decryptedBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aesKey, cipher);
+    const decryptedBuffer = await subtle.decrypt({ name: "AES-GCM", iv }, aesKey, cipher);
 
     // 5. Binary-Safe Text Decoding
     const decBytes = new Uint8Array(decryptedBuffer);
     try {
-      const text = new TextDecoder("utf-8", { fatal: true }).decode(decBytes).replace(/\0+$/, '');
-      return text;
+      return new TextDecoder("utf-8", { fatal: true }).decode(decBytes).replace(/\0+$/, '');
     } catch(e) {
-      // If it's compressed/binary, extract readable characters
       let readable = "";
       for (let i = 0; i < decBytes.length; i++) {
         const char = String.fromCharCode(decBytes[i]);
