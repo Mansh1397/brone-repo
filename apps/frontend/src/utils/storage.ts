@@ -148,74 +148,61 @@ export async function encryptAndSaveState(state: any): Promise<void> {
   local.setItem('brone_secure_vault', transportString);
 }
 
-const omnivorousToBytes = (data: any): Uint8Array => {
-  if (!data) return new Uint8Array();
-  if (data instanceof Uint8Array) return data;
-  if (Array.isArray(data)) return new Uint8Array(data);
-
-  if (typeof data === 'string') {
-    // 1. Try parsing as JSON array or object
-    try {
-      const parsed = JSON.parse(data);
-      if (Array.isArray(parsed)) return new Uint8Array(parsed);
-      if (parsed && parsed.data && Array.isArray(parsed.data)) return new Uint8Array(parsed.data);
-    } catch (e) { /* Not JSON */ }
-
-    let cleanStr = data.replace(/^(ENC_GCM:|0x)/, '').trim();
-
-    // 2. Is it a comma-separated string?
-    if (cleanStr.includes(',')) {
-      const parts = cleanStr.replace(/[\[\]]/g, '').split(',');
-      return new Uint8Array(parts.map(n => parseInt(n.trim(), 10) || 0));
-    }
-
-    // 3. Is it pure Hex?
-    if (/^[0-9a-fA-F]+$/.test(cleanStr) && cleanStr.length % 2 === 0) {
-      const bytes = new Uint8Array(cleanStr.length / 2);
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(cleanStr.substring(i * 2, i * 2 + 2), 16);
-      }
-      return bytes;
-    }
-
-    // 4. Safe Base64 Fallback
-    try {
-      const b64 = cleanStr.replace(/[^A-Za-z0-9+/=]/g, '');
-      const pad = b64.padEnd(b64.length + (4 - (b64.length % 4)) % 4, '=');
-      const bin = safeAtob(pad);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) {
-        bytes[i] = bin.charCodeAt(i);
-      }
-      return bytes;
-    } catch (e) {
-      // 5. Absolute fallback: character codes
-      const bytes = new Uint8Array(cleanStr.length);
-      for (let i = 0; i < cleanStr.length; i++) {
-        bytes[i] = cleanStr.charCodeAt(i);
-      }
-      return bytes;
-    }
+const hexToBytes = (hex: string): Uint8Array => {
+  const cleanHex = hex.replace(/^(ENC_GCM:|0x)/, '');
+  const bytes = new Uint8Array(Math.ceil(cleanHex.length / 2));
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
   }
-  return new Uint8Array();
+  return bytes;
+};
+
+const base64ToBytes = (base64: string): Uint8Array => {
+  const binaryString = safeAtob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 };
 
 export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: CryptoKey): Promise<Uint8Array> => {
   try {
-    const rawBytes = omnivorousToBytes(encryptedData);
-
-    if (!encryptionKey) {
-      return rawBytes;
+    let parsedData = encryptedData;
+    
+    // 1. Attempt JSON parse
+    if (typeof encryptedData === 'string') {
+      try { parsedData = JSON.parse(encryptedData); } 
+      catch (e) { parsedData = encryptedData; }
     }
 
-    if (rawBytes.length <= 12) {
-      return rawBytes;
+    let rawBytes: Uint8Array | null = null;
+    let ivBytes: Uint8Array;
+    let cipherBytes: Uint8Array;
+
+    // 2. Format extraction
+    if (typeof parsedData === 'string') {
+      const cleanStr = parsedData.replace(/^(ENC_GCM:|0x)/, '');
+      rawBytes = /^[0-9a-fA-F]+$/.test(cleanStr) ? hexToBytes(parsedData) : base64ToBytes(parsedData);
+      
+      // If we don't have an encryption key, or if the byte length matches a standard raw ML-KEM private key (1184, 2400, or 3168 bytes), bypass decryption entirely.
+      if (!encryptionKey || rawBytes.length === 1184 || rawBytes.length === 2400 || rawBytes.length === 3168) {
+        console.warn("🚨 Bypassing decryption: Payload matches unencrypted ML-KEM private key signature.");
+        return rawBytes;
+      }
+
+      ivBytes = rawBytes.slice(0, 12);
+      cipherBytes = rawBytes.slice(12);
+    } else if (parsedData && parsedData.iv && parsedData.ciphertext) {
+      ivBytes = typeof parsedData.iv === 'string' ? hexToBytes(parsedData.iv) : new Uint8Array(parsedData.iv);
+      cipherBytes = typeof parsedData.ciphertext === 'string' ? hexToBytes(parsedData.ciphertext) : new Uint8Array(parsedData.ciphertext);
+    } else {
+      throw new Error("Unrecognized storage format.");
     }
 
-    const ivBytes = rawBytes.slice(0, 12);
-    const cipherBytes = rawBytes.slice(12);
-
+    // 3. Attempt Decryption
     try {
+      if (!encryptionKey) throw new Error("No key provided.");
       const cryptoObj = getCrypto();
       const decryptedBuffer = await cryptoObj.subtle.decrypt(
         { name: "AES-GCM", iv: ivBytes },
@@ -224,12 +211,13 @@ export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: 
       );
       return new Uint8Array(decryptedBuffer);
     } catch (cryptoErr) {
-      console.warn("🚨 AES Decrypt Failed. Falling back to raw bytes. 🚨");
-      return rawBytes;
+      console.warn("🚨 AES Decrypt Failed (OperationError). Assuming payload is UNENCRYPTED raw private key. 🚨");
+      // ULTIMATE FALLBACK: Return the original raw bytes
+      return rawBytes ? rawBytes : cipherBytes;
     }
   } catch (err: any) {
     console.error("Critical Vault Failure", err);
-    throw new Error(`decryptStoragePayload failed: ${err.message}`);
+    throw new Error(`decryptStoragePayload failed: ${err.message || 'OperationError'} \nStack: ${err.stack}`);
   }
 };
 
@@ -249,29 +237,14 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
   }
 
   try {
-    const cryptoInstance = getCrypto();
-    const combinedBytes = base64ToArrayBuffer(vaultData);
-
-    if (combinedBytes.length < 12) {
-      throw new Error('Corrupted storage payload: length is insufficient.');
-    }
-
-    const iv = combinedBytes.slice(0, 12);
-    const ciphertext = combinedBytes.slice(12);
     const key = await getOrCreateStorageKey();
+    const decryptedBytes = await decryptStoragePayload(vaultData, key);
 
-    const plaintextBuffer = await cryptoInstance.subtle.decrypt(
-      {
-        name: 'AES-GCM',
-        iv: iv,
-      },
-      key,
-      ciphertext
-    );
-
-    const decryptedString = new TextDecoder().decode(plaintextBuffer);
+    // Decode and parse JS state object
+    const decryptedString = new TextDecoder().decode(decryptedBytes);
     return JSON.parse(decryptedString);
   } catch (error) {
+    // 4. FAIL-SAFE PURGE BOUNDARIES
     console.error('Decryption failed. Storage is compromised or corrupted. Purging...', error);
     try {
       local.removeItem('brone_secure_vault');
@@ -283,63 +256,4 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
     }
     return null;
   }
-}
-
-/**
- * Isolated function specifically for the Jury that safely fetches and decodes 
- * the ML-KEM private key from storage without affecting global app state.
- */
-export async function getJurorPrivateKey(): Promise<Uint8Array | null> {
-  const local = typeof localStorage !== 'undefined' ? localStorage : null;
-  if (!local) return null;
-
-  const vaultData = local.getItem('brone_secure_vault');
-  if (!vaultData) return null;
-
-  try {
-    const cryptoInstance = getCrypto();
-    let combinedBytes: Uint8Array;
-    const cleanVault = vaultData.trim();
-    if (/^[0-9a-fA-F]+$/.test(cleanVault)) {
-      const bytes = new Uint8Array(Math.ceil(cleanVault.length / 2));
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(cleanVault.substring(i * 2, i * 2 + 2), 16);
-      }
-      combinedBytes = bytes;
-    } else {
-      const binaryString = safeAtob(cleanVault);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      combinedBytes = bytes;
-    }
-
-    if (combinedBytes.length < 12) return null;
-
-    const iv = combinedBytes.slice(0, 12);
-    const ciphertext = combinedBytes.slice(12);
-    const key = await getOrCreateStorageKey();
-
-    const plaintextBuffer = await cryptoInstance.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv },
-      key,
-      ciphertext
-    );
-
-    const decryptedString = new TextDecoder().decode(plaintextBuffer);
-    const stored = JSON.parse(decryptedString);
-    if (stored && stored.pqKemPrivateKeyHex) {
-      const cleanHex = stored.pqKemPrivateKeyHex.replace(/^(ENC_GCM:|0x)/, '').trim();
-      const bytes = new Uint8Array(cleanHex.length / 2);
-      for (let i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
-      }
-      return bytes;
-    }
-  } catch (error) {
-    console.error('getJurorPrivateKey failed:', error);
-  }
-  return null;
 }

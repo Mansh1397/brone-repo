@@ -80,94 +80,79 @@ const encryptPayload = async (text: string): Promise<string> => {
   return `ENC_GCM:${base64}`;
 };
 
-// 3. Decrypt ciphertext payload using local storage key (AES-GCM)
-const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: Uint8Array | string): Promise<string> => {
+const mlKem = ml_kem1024;
+
+export const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: any) => {
+  let currentStep = "Initialization";
   try {
-    // 1. Ensure Local Private Key is Bytes
+    currentStep = "Formatting Private Key";
     let privKeyBytes: Uint8Array;
-    if (typeof localPrivateKeyRaw === 'string') {
-      privKeyBytes = hexToBytes(localPrivateKeyRaw);
+    
+    // Safely extract the raw ML-KEM private key bytes without WebCrypto
+    if (localPrivateKeyRaw instanceof Uint8Array) {
+        privKeyBytes = localPrivateKeyRaw;
+    } else if (typeof localPrivateKeyRaw === 'string') {
+        privKeyBytes = hexToBytes(localPrivateKeyRaw);
+    } else if (localPrivateKeyRaw && localPrivateKeyRaw.data) {
+        privKeyBytes = new Uint8Array(localPrivateKeyRaw.data);
+    } else if (localPrivateKeyRaw && typeof localPrivateKeyRaw === 'object') {
+        privKeyBytes = new Uint8Array(Object.values(localPrivateKeyRaw));
     } else {
-      privKeyBytes = localPrivateKeyRaw;
+        throw new Error("Invalid private key format");
     }
 
-    // 2. Decode Network Hex Strings to Raw Bytes
+    currentStep = "Decoding Network Hex";
     const kemBytes = hexToBytes(task.kem_ciphertext);
     const wrappedKeyBytes = hexToBytes(task.wrapped_key);
-    const payloadBytes = decodePayloadBytes(task.encrypted_payload);
+    const payloadBytes = hexToBytes(task.encrypted_payload);
 
-    if (kemBytes.length === 0 || wrappedKeyBytes.length === 0 || payloadBytes.length === 0) {
-      throw new Error(`Missing or empty network payload bytes. KEM: ${kemBytes.length}, Wrap: ${wrappedKeyBytes.length}, Payload: ${payloadBytes.length}`);
-    }
+    currentStep = "ML-KEM Decapsulation";
+    // @ts-ignore - Assuming mlKem is available in scope
+    const sharedSecretBytes = await mlKem.decapsulate(kemBytes, privKeyBytes);
 
-    // 3. Decapsulate ML-KEM
-    const mlKem = ml_kem1024;
-    const sharedSecretBytes = mlKem.decapsulate(kemBytes, privKeyBytes); 
-    
-    if (!sharedSecretBytes || sharedSecretBytes.length === 0) {
-      throw new Error("ML-KEM decapsulation returned empty secret.");
-    }
-
-    // 4. Import Wrapping Key (AES-KW)
+    currentStep = "Importing Wrapping Key (AES-KW)";
     const wrappingKey = await crypto.subtle.importKey(
-      "raw", 
-      sharedSecretBytes, 
-      "AES-KW", 
-      false, 
-      ["unwrapKey"]
+      "raw", sharedSecretBytes, "AES-KW", false, ["unwrapKey"]
     );
 
-    // 5. Unwrap the AES-GCM Key
+    currentStep = "Unwrapping AES-GCM Key";
     const unwrappedAesKey = await crypto.subtle.unwrapKey(
-      "raw", 
-      wrappedKeyBytes, 
-      wrappingKey, 
-      "AES-KW", 
-      { name: "AES-GCM", length: 256 }, 
-      false, 
-      ["decrypt"]
+      "raw", wrappedKeyBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
     );
 
-    // 6. Decrypt the Final Payload (Slice the 12-byte IV)
+    currentStep = "Decrypting Payload";
     const iv = payloadBytes.slice(0, 12);
     const ciphertext = payloadBytes.slice(12);
-    
     const decryptedBuffer = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
       unwrappedAesKey,
       ciphertext
     );
-    
+
+    currentStep = "Parsing Plaintext";
     const decryptedBytes = new Uint8Array(decryptedBuffer);
-
-    let unpackedBytes = decryptedBytes;
+    
     try {
-      unpackedBytes = pako.inflate(decryptedBytes);
-    } catch (e) {
-      // Fallback if not compressed
+        const text = new TextDecoder().decode(decryptedBytes).replace(/\0+$/, '');
+        if(text.startsWith('{') || text.startsWith('[')) {
+            try {
+                const obj = JSON.parse(text);
+                return obj.content || obj.text || JSON.stringify(obj, null, 2);
+            } catch(e) { return text; }
+        }
+        
+        // If it contains non-printable characters, it's compressed/binary data
+        const isGarbled = /[^\x20-\x7E\t\n\r]/.test(text);
+        if (isGarbled) {
+            return "Binary Payload (Hex): " + Array.from(decryptedBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+        return text;
+    } catch(e) {
+        return "Binary Payload (Hex): " + Array.from(decryptedBytes).map(b => b.toString(16).padStart(2, '0')).join('');
     }
-
-    try {
-      const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(unpackedBytes).replace(/\0+$/, '');
-      
-      // If it contains typical JSON braces, parse it
-      if (utf8Text.startsWith('{') || utf8Text.startsWith('[')) {
-        try {
-          const jsonObj = JSON.parse(utf8Text);
-          return jsonObj.content || jsonObj.text || JSON.stringify(jsonObj, null, 2);
-        } catch(e2) {}
-      }
-      return utf8Text;
-    } catch (e) {
-      // Return raw bytes as a clean Hex string fallback
-      return Array.from(unpackedBytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-    }
-
   } catch (err: any) {
-    console.error("🚨 POST DECRYPTION CRASH 🚨", err);
-    throw new Error(`decryptPostWithStorageKey failed: ${err.message || err.name || 'OperationError'} \nStack: ${err.stack || 'N/A'}`);
+    console.error(`🚨 CRASH AT: ${currentStep}`, err);
+    throw new Error(`Failed at Step: ${currentStep} | Error: ${err.message || err.name}`);
   }
 };
 
@@ -458,13 +443,17 @@ const decryptPayloadForJuror = async (
         return await decryptPostWithStorageKey(task, myKeys.kemPrivateKey);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        const errorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        const errorMsg = err.message || String(err);
+        if (errorMsg.includes("Failed at Step:")) {
+          return `[DECRYPTION FAILED]: ${errorMsg}`;
+        }
+        const errorDetail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         let step = "Unknown";
-        if (errorMsg.includes("Decapsulate failed")) step = "3. Decapsulating ML-KEM";
-        else if (errorMsg.includes("Import Wrapping Key")) step = "4. Importing Wrapping Key";
-        else if (errorMsg.includes("UnwrapKey")) step = "5. Unwrapping AES Key (AES-KW)";
-        else if (errorMsg.includes("Final Payload AES")) step = "6. Decrypting Payload";
-        return `[DECRYPTION FAILED]: Step: ${step} | Diag: N/A | Error: ${errorMsg}`;
+        if (errorDetail.includes("Decapsulate failed")) step = "3. Decapsulating ML-KEM";
+        else if (errorDetail.includes("Import Wrapping Key")) step = "4. Importing Wrapping Key";
+        else if (errorDetail.includes("UnwrapKey")) step = "5. Unwrapping AES Key (AES-KW)";
+        else if (errorDetail.includes("Final Payload AES")) step = "6. Decrypting Payload";
+        return `[DECRYPTION FAILED]: Step: ${step} | Diag: N/A | Error: ${errorDetail}`;
       }
     }
   }
