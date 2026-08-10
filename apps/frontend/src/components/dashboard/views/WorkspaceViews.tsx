@@ -395,16 +395,26 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
         }
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        const errorMsg = err instanceof Error || (err && err.name)
-          ? `${err.name || 'Error'}: ${err.message || err}`
-          : (err.message || JSON.stringify(err) || err.toString());
+        const errorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+
+        let stepName = "Outer Fetch/Keypair Resolution";
+        let diagnostics = `Task: ${!!task}`;
+        let cleanError = errorMsg;
+
+        if (errorMsg.includes("Step:") && errorMsg.includes("Diag:")) {
+          const parts = errorMsg.split('|');
+          stepName = parts[0].replace("Step:", "").trim();
+          diagnostics = parts[1].replace("Diag:", "").trim();
+          cleanError = parts.slice(2).join('|').replace("Error:", "").trim();
+        }
+
         if (active) {
           setText(
             <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
               <h4>🚨 DECRYPTION CRASH 🚨</h4>
-              <p><strong>Error:</strong> {errorMsg}</p>
-              <p><strong>KEM Ciphertext:</strong> {task?.kem_ciphertext ? task.kem_ciphertext.substring(0, 50) + '...' : 'MISSING'}</p>
-              <p><strong>Encrypted Payload:</strong> {task?.encrypted_payload ? task.encrypted_payload.substring(0, 50) + '...' : 'MISSING'}</p>
+              <p><strong>Failed at Step:</strong> {stepName}</p>
+              <p><strong>Diagnostics:</strong> {diagnostics}</p>
+              <p><strong>Error:</strong> {cleanError}</p>
             </div>
           );
         }
