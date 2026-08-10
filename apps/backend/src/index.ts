@@ -620,8 +620,8 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
     // Save the nullifier to prevent double-voting
     await pool.query({
-      text: "INSERT INTO nullifiers (nullifier_hash, target_ipfs_hash) VALUES ($1, $2)",
-      values: [nullifier, ipfs_hash]
+      text: "INSERT INTO nullifiers (nullifier_hash, target_ipfs_hash, action_type) VALUES ($1, $2, $3)",
+      values: [nullifier, ipfs_hash, 'VOTE']
     });
 
     const vote_decision = vote_status === "APPROVED" ? "UPHOLD" : "DISMISS";
