@@ -102,7 +102,8 @@ export async function initDB(): Promise<void> {
       await pool.query(`
         CREATE TABLE anonymous_public_keys (
           key_hash VARCHAR(255) PRIMARY KEY,
-          public_key_hex TEXT NOT NULL
+          public_key_hex TEXT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `);
     } else {
@@ -115,11 +116,13 @@ export async function initDB(): Promise<void> {
         await pool.query(`
           CREATE TABLE anonymous_public_keys (
             key_hash VARCHAR(255) PRIMARY KEY,
-            public_key_hex TEXT NOT NULL
+            public_key_hex TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           );
         `);
       }
     }
+    await pool.query(`ALTER TABLE anonymous_public_keys ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;`).catch(() => {});
 
     // Table 7: post_encapsulations
     await pool.query(`DROP TABLE IF EXISTS post_encapsulations CASCADE;`).catch(() => {});

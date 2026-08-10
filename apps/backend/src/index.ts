@@ -353,7 +353,7 @@ v1Router.post("/reporting/increment", handleMetricIncrement);
 
 const handleGetPublicKeys = async (req: any, res: any) => {
   try {
-    const result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY RANDOM() LIMIT 11;");
+    const result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY created_at DESC LIMIT 11;");
     const keys = result.rows.map((row: any) => row.public_key_hex);
     return res.status(200).json(keys);
   } catch (error: any) {
@@ -393,10 +393,13 @@ const handleGetArbitration = async (req: any, res: any) => {
     const jurorPubkey = req.user?.id || "";
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
-      SELECT ipfs_hash, geohash, ring_signature, status, sprt_score, submitted_at 
-      FROM decentralized_posts 
-      WHERE geohash LIKE $1 AND status = 'PENDING' AND (author_pubkey IS NULL OR author_pubkey != $2)
-      ORDER BY RANDOM() LIMIT 10
+      SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.status, dp.sprt_score, dp.submitted_at 
+      FROM decentralized_posts dp
+      INNER JOIN post_encapsulations pe ON dp.ipfs_hash = pe.ipfs_hash
+      WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' 
+        AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)
+        AND pe.juror_pubkey = $2
+      ORDER BY dp.submitted_at DESC LIMIT 10
     `, [geohashFilter, jurorPubkey]);
 
     const posts = result.rows.map((row: any) => ({
