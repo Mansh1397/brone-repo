@@ -200,7 +200,7 @@ const omnivorousToBytes = (data: any): Uint8Array => {
   return new Uint8Array();
 };
 
-export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: CryptoKey): Promise<Uint8Array> => {
+export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: CryptoKey): Promise<string> => {
   try {
     // Omnivorous parse guarantees we get a Uint8Array back without crashing
     const rawBytes = omnivorousToBytes(encryptedData);
@@ -208,29 +208,34 @@ export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: 
     // Bypass logic for unencrypted raw keys (ML-KEM keys are large)
     if (!encryptionKey || rawBytes.length === 1184 || rawBytes.length === 2400 || rawBytes.length === 3168 || rawBytes.length > 1000) {
       console.warn("🚨 Bypassing local decryption: Payload matches raw key signature or no key provided.");
-      return rawBytes;
+      const decodedString = new TextDecoder().decode(rawBytes);
+      return decodedString.replace(/\0+$/, '');
     }
 
     // If it's too small to contain a 12-byte IV + ciphertext, just return it
     if (rawBytes.length <= 12) {
-      return rawBytes;
+      const decodedString = new TextDecoder().decode(rawBytes);
+      return decodedString.replace(/\0+$/, '');
     }
 
     const ivBytes = rawBytes.slice(0, 12);
     const cipherBytes = rawBytes.slice(12);
 
+    let decryptedBuffer: ArrayBuffer | null = null;
     try {
       const cryptoObj = getCrypto();
-      const decryptedBuffer = await cryptoObj.subtle.decrypt(
+      decryptedBuffer = await cryptoObj.subtle.decrypt(
         { name: "AES-GCM", iv: ivBytes },
         encryptionKey,
         cipherBytes
       );
-      return new Uint8Array(decryptedBuffer);
     } catch (cryptoErr) {
       console.warn("🚨 AES Decrypt Failed (OperationError). Falling back to raw bytes. 🚨");
-      return rawBytes;
     }
+
+    const finalBytes = decryptedBuffer ? new Uint8Array(decryptedBuffer) : rawBytes;
+    const decodedString = new TextDecoder().decode(finalBytes);
+    return decodedString.replace(/\0+$/, '');
   } catch (err: any) {
     console.error("Critical Vault Failure", err);
     throw new Error(`decryptStoragePayload failed: ${err.message}`);
@@ -254,10 +259,7 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
 
   try {
     const key = await getOrCreateStorageKey();
-    const decryptedBytes = await decryptStoragePayload(vaultData, key);
-
-    // Decode and parse JS state object
-    const decryptedString = new TextDecoder().decode(decryptedBytes);
+    const decryptedString = await decryptStoragePayload(vaultData, key);
     return JSON.parse(decryptedString);
   } catch (error) {
     // 4. FAIL-SAFE PURGE BOUNDARIES

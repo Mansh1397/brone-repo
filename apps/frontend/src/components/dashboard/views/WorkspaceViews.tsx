@@ -137,7 +137,27 @@ const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: Uint8Arr
       ciphertext
     );
 
-    return new TextDecoder().decode(decryptedBuffer);
+    const rawText = new TextDecoder().decode(decryptedBuffer).replace(/\0+$/, '');
+    
+    // 1. Check if the plaintext is a JSON object (e.g. {"content": "my post"})
+    try {
+      const jsonObj = JSON.parse(rawText);
+      if (jsonObj && jsonObj.content) return jsonObj.content;
+      if (jsonObj && jsonObj.text) return jsonObj.text;
+      return JSON.stringify(jsonObj, null, 2); // Fallback: render the whole JSON nicely
+    } catch (e) {
+      // Not JSON.
+    }
+
+    // 2. Check if the plaintext is Base64 encoded
+    if (/^[A-Za-z0-9+/=]+$/.test(rawText.trim()) && rawText.length % 4 === 0) {
+      try {
+        return decodeURIComponent(escape(window.atob(rawText.trim())));
+      } catch (e) { /* Not base64 */ }
+    }
+
+    // 3. Fallback: Return raw text
+    return rawText;
 
   } catch (err: any) {
     console.error("🚨 POST DECRYPTION CRASH 🚨", err);
@@ -254,7 +274,27 @@ export const decryptPayload = async (task: any, localPrivateKeyRaw: Uint8Array |
         unwrappedAesKey,
         ciphertext
       );
-      return new TextDecoder().decode(decryptedBuffer);
+      const rawText = new TextDecoder().decode(decryptedBuffer).replace(/\0+$/, '');
+      
+      // 1. Check if the plaintext is a JSON object (e.g. {"content": "my post"})
+      try {
+        const jsonObj = JSON.parse(rawText);
+        if (jsonObj && jsonObj.content) return jsonObj.content;
+        if (jsonObj && jsonObj.text) return jsonObj.text;
+        return JSON.stringify(jsonObj, null, 2); // Fallback: render the whole JSON nicely
+      } catch (e) {
+        // Not JSON.
+      }
+
+      // 2. Check if the plaintext is Base64 encoded
+      if (/^[A-Za-z0-9+/=]+$/.test(rawText.trim()) && rawText.length % 4 === 0) {
+        try {
+          return decodeURIComponent(escape(window.atob(rawText.trim())));
+        } catch (e) { /* Not base64 */ }
+      }
+
+      // 3. Fallback: Return raw text
+      return rawText;
     } catch (err) {
       throw new Error(`Final Payload AES Decrypt failed: ${err}`);
     }
