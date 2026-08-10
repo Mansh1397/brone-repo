@@ -125,15 +125,15 @@ export async function initDB(): Promise<void> {
     await pool.query(`DROP TABLE IF EXISTS post_encapsulations CASCADE;`).catch(() => {});
     await pool.query(`
       CREATE TABLE post_encapsulations (
-        ipfs_hash VARCHAR(255) NOT NULL REFERENCES decentralized_posts(ipfs_hash) ON DELETE CASCADE,
+        ipfs_hash VARCHAR(255) NOT NULL,
         juror_pubkey TEXT NOT NULL,
         kem_ciphertext TEXT NOT NULL,
-        wrapped_key TEXT DEFAULT ''
+        wrapped_key TEXT
       );
     `);
     
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_post_encapsulations_ipfs_hash ON post_encapsulations(ipfs_hash);
+      CREATE INDEX IF NOT EXISTS idx_post_encapsulations_ipfs ON post_encapsulations(ipfs_hash);
     `);
 
     console.log('[DB] Zero-Knowledge schema verified.');

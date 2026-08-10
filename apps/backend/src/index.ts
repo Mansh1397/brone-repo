@@ -544,7 +544,7 @@ const handlePostArbitration = async (req: any, res: any) => {
             ipfs_hash VARCHAR(255) NOT NULL,
             juror_pubkey TEXT NOT NULL,
             kem_ciphertext TEXT NOT NULL,
-            wrapped_key TEXT DEFAULT ''
+            wrapped_key TEXT
           )
         `).catch(() => {});
 
