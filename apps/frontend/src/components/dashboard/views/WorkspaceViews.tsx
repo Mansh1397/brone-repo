@@ -529,7 +529,14 @@ const getOrCreateKeyPair = async (): Promise<{
   const cached = (window as any).__brone_keypair;
   if (cached && cached.dsaPrivateKey && cached.kemPrivateKey) return cached;
 
-  const stored = await loadAndDecryptState();
+  let stored = null;
+  try {
+    stored = await loadAndDecryptState(true);
+  } catch (err) {
+    console.error("🚨 LOCAL VAULT DECRYPTION CRASH 🚨", err);
+    throw new Error(`Local KeyPair resolution failed: ${err instanceof Error ? err.message : 'OperationError'}`);
+  }
+
   if (stored && stored.pqDsaPrivateKeyHex && stored.pqKemPrivateKeyHex && stored.pqPublicKeyHex) {
     const dsaPrivateKey = hexToBytes(stored.pqDsaPrivateKeyHex);
     const kemPrivateKey = hexToBytes(stored.pqKemPrivateKeyHex);

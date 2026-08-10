@@ -152,7 +152,7 @@ export async function encryptAndSaveState(state: any): Promise<void> {
  * 3. ROBUST DECRYPTION & TAMPER-DETECTION ENGINE
  * Loads, verifies, and decrypts the state from localStorage.
  */
-export async function loadAndDecryptState(): Promise<any | null> {
+export async function loadAndDecryptState(throwOnError = false): Promise<any | null> {
   const local = typeof localStorage !== 'undefined' ? localStorage : null;
   if (!local) {
     return null;
@@ -165,15 +165,27 @@ export async function loadAndDecryptState(): Promise<any | null> {
 
   try {
     const cryptoInstance = getCrypto();
-    const combinedBytes = base64ToArrayBuffer(vaultData);
+    
+    // Support decoding both Hex and Base64 encoded vault data robustly
+    let combinedBytes: Uint8Array;
+    const cleanVault = vaultData.trim();
+    if (/^[0-9a-fA-F]+$/.test(cleanVault)) {
+      const bytes = new Uint8Array(Math.ceil(cleanVault.length / 2));
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(cleanVault.substring(i * 2, i * 2 + 2), 16);
+      }
+      combinedBytes = bytes;
+    } else {
+      combinedBytes = base64ToArrayBuffer(cleanVault);
+    }
 
     if (combinedBytes.length < 12) {
       throw new Error('Corrupted storage payload: length is insufficient.');
     }
 
-    // Isolate the 12-byte IV and the ciphertext
-    const iv = combinedBytes.slice(0, 12);
-    const ciphertext = combinedBytes.slice(12);
+    // Isolate the 12-byte IV and the ciphertext as clean Uint8Arrays
+    const iv = new Uint8Array(combinedBytes.slice(0, 12));
+    const ciphertext = new Uint8Array(combinedBytes.slice(12));
 
     const key = await getOrCreateStorageKey();
 
@@ -197,6 +209,9 @@ export async function loadAndDecryptState(): Promise<any | null> {
       local.removeItem('brone_secure_vault');
     } catch (e) {
       // Ignored if storage is completely broken
+    }
+    if (throwOnError) {
+      throw error;
     }
     return null;
   }
