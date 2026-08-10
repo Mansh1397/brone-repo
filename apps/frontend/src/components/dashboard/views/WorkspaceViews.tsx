@@ -500,6 +500,29 @@ const decryptPayloadForJuror = async (
   return await decryptSelfPostPayload(encryptedStr);
 };
 
+const getSafeFingerprint = (pubKeyInput: any): string => {
+  try {
+    let bytes: Uint8Array;
+    if (pubKeyInput instanceof Uint8Array) {
+      bytes = pubKeyInput;
+    } else if (typeof pubKeyInput === 'string') {
+      const clean = pubKeyInput.replace(/^(ENC_GCM:|0x)/, '').trim();
+      // If it's a massive hex string, take the first 8 characters (4 bytes)
+      if (/^[0-9a-fA-F]+$/.test(clean)) {
+        return clean.substring(0, 4).toLowerCase();
+      }
+      // Otherwise decode base64
+      const bin = window.atob(clean);
+      bytes = new Uint8Array(Array.from(bin).map(c => c.charCodeAt(0)));
+    } else {
+      bytes = new Uint8Array(Object.values(pubKeyInput || {}));
+    }
+    return Array.from(bytes).slice(0, 2).map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    return "err!";
+  }
+};
+
 // 4. React component to fetch and decrypt IPFS descriptions client-side
 const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: any) => {
   let currentStep = "Initialization";
@@ -558,16 +581,8 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
       );
     } catch (unwrapErr: any) {
       const myPubKeyRaw = localStorage.getItem('pq_kem_public_key') || '';
-      let pubKeyFingerprint = "Missing";
-      if (myPubKeyRaw) {
-          const kemPubPart = myPubKeyRaw.includes(':') ? myPubKeyRaw.split(':')[1] : myPubKeyRaw;
-          const cleanPub = kemPubPart.replace(/^(ENC_GCM:|0x)/, '').trim();
-          const pubBytes = new Uint8Array(Math.ceil(cleanPub.length / 2));
-          for(let i=0; i<pubBytes.length; i++) pubBytes[i] = parseInt(cleanPub.substring(i*2, i*2+2), 16);
-          pubKeyFingerprint = Array.from(pubBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
-      }
-
-      const keyFingerprint = Array.from(privKeyBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
+      const pubKeyFingerprint = getSafeFingerprint(myPubKeyRaw.includes(':') ? myPubKeyRaw.split(':')[1] : myPubKeyRaw);
+      const keyFingerprint = getSafeFingerprint(privKeyBytes);
       return `🔒 Locked | My PrivFP: ${keyFingerprint} | My PubFP: ${pubKeyFingerprint}`;
     }
 
@@ -1346,13 +1361,13 @@ export const ReportingHub: React.FC = () => {
         }
 
         try {
-          const pubKeyFingerprint = Array.from(jurorPubKeyBytes).slice(0, 4).map(b => b.toString(16).padStart(2,'0')).join('');
-          console.log(`[AUTHOR NETWORK] Encrypting for Juror ${jurorId} | PubKey FP: ${pubKeyFingerprint} | Bytes: ${jurorPubKeyBytes.length}`);
+          const authorPubFp = getSafeFingerprint(rawJurorPubKey);
+          console.log(`[AUTHOR NETWORK] Encrypting for Juror ${jurorId} | PubKey FP: ${authorPubFp} | Bytes: ${jurorPubKeyBytes.length}`);
           
           if (jurorPubKeyBytes.length < 1000) {
               alert(`DATABASE CORRUPTION: Juror ${jurorId}'s Public Key is only ${jurorPubKeyBytes.length} bytes! The DB column is truncating it.`);
           } else {
-              alert(`Encrypting for Juror ${jurorId} | PubKey Fingerprint: ${pubKeyFingerprint}`);
+              alert(`Encrypting for Juror ${jurorId} | PubKey Fingerprint: ${authorPubFp}`);
           }
 
           // 4. Encapsulate specifically for THIS juror
