@@ -175,9 +175,18 @@ export const decryptStoragePayload = async (encryptedData: string | any, encrypt
     let cipherBytes: Uint8Array;
 
     if (typeof encryptedData === 'string') {
-      const cleanVault = encryptedData.trim();
-      // If stored as a single string, assume Hex or Base64 and slice the 12-byte IV
-      rawBytes = /^[0-9a-fA-F]+$/.test(cleanVault) ? hexToBytes(cleanVault) : base64ToBytes(cleanVault);
+      const cleanStr = encryptedData.replace(/^(ENC_GCM:|0x)/, '').trim();
+      const isHex = /^[0-9a-fA-F]+$/.test(cleanStr);
+
+      if (isHex) {
+        rawBytes = hexToBytes(encryptedData);
+      } else {
+        try {
+          rawBytes = base64ToBytes(cleanStr);
+        } catch (e) {
+          throw new Error("Stored key string is neither valid Hex nor valid Base64.");
+        }
+      }
       ivBytes = rawBytes.slice(0, 12);
       cipherBytes = rawBytes.slice(12);
     } else if (encryptedData && encryptedData.iv && encryptedData.ciphertext) {
