@@ -416,13 +416,47 @@ const decryptSelfPostPayload = async (encryptedStr: string): Promise<string> => 
   }
 };
 
+const getLocalPrivateKeyBytes = (rawStorageValue: string | null | any): Uint8Array => {
+  if (!rawStorageValue) throw new Error("No private key found in storage.");
+  
+  let parsed = rawStorageValue;
+  if (typeof rawStorageValue === 'string') {
+    try { parsed = JSON.parse(rawStorageValue); } catch(e) {}
+  }
+  
+  if (parsed && typeof parsed === 'object') {
+    const possibleKey = parsed.pqKemPrivateKeyHex || parsed.kemPrivateKeyHex || parsed.kem_private_key || parsed.privateKey;
+    if (possibleKey) {
+      parsed = possibleKey;
+    }
+  }
+
+  if (parsed instanceof Uint8Array) return parsed;
+  if (Array.isArray(parsed)) return new Uint8Array(parsed);
+  if (parsed.data && Array.isArray(parsed.data)) return new Uint8Array(parsed.data);
+  if (typeof parsed === 'string') {
+    const cleanStr = parsed.replace(/^(ENC_GCM:|0x)/, '').trim();
+    // If Hex:
+    if (/^[0-9a-fA-F]+$/.test(cleanStr)) {
+      const bytes = new Uint8Array(Math.ceil(cleanStr.length / 2));
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(cleanStr.substring(i * 2, i * 2 + 2), 16);
+      }
+      return bytes;
+    }
+    // If Base64:
+    try { return new Uint8Array(Array.from(window.atob(cleanStr)).map(c => c.charCodeAt(0))); } catch(e) {}
+  }
+  throw new Error("Failed to decode local private key into Uint8Array.");
+};
+
 const decryptPayloadForJuror = async (
   encryptedStr: string,
   ringSignature: any,
   myKeys: any
 ): Promise<string> => {
-  if (ringSignature && myKeys?.kemPrivateKey) {
-    const myDsaPub = myKeys.publicKeyHex.split(':')[0];
+  if (ringSignature) {
+    const myDsaPub = myKeys?.publicKeyHex ? myKeys.publicKeyHex.split(':')[0] : "";
     let match = null;
 
     if (Array.isArray(ringSignature.encapsulations)) {
@@ -440,7 +474,20 @@ const decryptPayloadForJuror = async (
           wrapped_key: match.wrapped_key,
           encrypted_payload: encryptedStr
         };
-        return await decryptPostWithStorageKey(task, myKeys.kemPrivateKey);
+
+        const rawStorageVal = localStorage.getItem('kem_private_key') || 
+                              localStorage.getItem('pqKemPrivateKeyHex') || 
+                              (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
+        
+        let privKeyBytes: Uint8Array;
+        if (rawStorageVal) {
+          privKeyBytes = getLocalPrivateKeyBytes(rawStorageVal);
+        } else {
+          const decryptedState = await loadAndDecryptState(true);
+          privKeyBytes = getLocalPrivateKeyBytes(decryptedState);
+        }
+
+        return await decryptPostWithStorageKey(task, privKeyBytes);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
         const errorMsg = err.message || String(err);
