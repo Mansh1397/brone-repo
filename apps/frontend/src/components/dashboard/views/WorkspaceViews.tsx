@@ -557,9 +557,8 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
         "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
       );
     } catch (unwrapErr: any) {
-      // If it fails here, it means ML-KEM implicitly rejected the Private Key.
-      // This post was encrypted for someone else!
-      return "🔒 Locked: Post encrypted for a different Juror.";
+      // If the KEM bytes are not exactly 768, 1088, 1184, or 1568 (depending on the Kyber level), the database is corrupting the data!
+      return `🔒 Locked (Mismatch) | KEM Payload Size: ${kemBytes.length} bytes | Expected: ~1088 or 1568 bytes`;
     }
 
     currentStep = `Decrypt Payload (Payload Len: ${payloadBytes.length})`;
