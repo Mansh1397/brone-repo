@@ -526,18 +526,23 @@ const handlePostArbitration = async (req: any, res: any) => {
     // 7. Insert KEM encapsulations into post_encapsulations for relational querying
     const encapsulations = req.body.encapsulations || req.body.kem_ciphertext || ring_signature.encapsulations || [];
     if (Array.isArray(encapsulations) && encapsulations.length > 0) {
+      console.warn("[ENCAPSULATION SHAPE]:", JSON.stringify(encapsulations[0]));
       for (const encap of encapsulations) {
         if (encap.juror_id || encap.pubkey || encap.target_pubkey) {
           const jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey;
           const kemCipher = encap.kem_ciphertext || encap.ciphertext || "";
           const wrapped = encap.wrapped_key || encap.wrappedKey || "";
-          await pool.query({
-            text: `
-              INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key)
-              VALUES ($1, $2, $3, $4);
-            `,
-            values: [ipfs_hash, jurorPub, kemCipher, wrapped]
-          });
+          try {
+            await pool.query({
+              text: `
+                INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key)
+                VALUES ($1, $2, $3, $4);
+              `,
+              values: [ipfs_hash, jurorPub, kemCipher, wrapped]
+            });
+          } catch (dbError) {
+            console.warn("🚨 [DB INSERT ERROR] 🚨:", dbError);
+          }
         }
       }
     }
@@ -763,13 +768,19 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorId = jurorPubkeyParam.split(':')[0] || jurorPubkey;
 
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
-    const result = await pool.query(`
-      SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext
-      FROM decentralized_posts dp
-      LEFT JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND pe.juror_pubkey = $3
-      WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)
-      ORDER BY RANDOM() LIMIT 10
-    `, [geohashFilter, jurorPubkey, jurorId]);
+    let result: any;
+    try {
+      result = await pool.query(`
+        SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext
+        FROM decentralized_posts dp
+        LEFT JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND pe.juror_pubkey = $3
+        WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)
+        ORDER BY RANDOM() LIMIT 10
+      `, [geohashFilter, jurorPubkey, jurorId]);
+    } catch (getDbError) {
+      console.warn("🚨 [DB SELECT ERROR] 🚨:", getDbError);
+      throw getDbError;
+    }
 
     const posts = await Promise.all(result.rows.map(async (row: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
