@@ -413,6 +413,7 @@ const handleGetArbitration = async (req: any, res: any) => {
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
+    console.warn("[TRUE POST CREATION]:", Object.keys(req.body));
     console.warn("[POST CREATION INCOMING]:", {
       hasEncryptedPayload: !!req.body.encrypted_payload,
       kemKeysType: typeof req.body.kem_ciphertext || typeof req.body.encapsulations,
@@ -523,17 +524,19 @@ const handlePostArbitration = async (req: any, res: any) => {
     });
 
     // 7. Insert KEM encapsulations into post_encapsulations for relational querying
-    const encapsList = ring_signature.encapsulations || [];
-    if (Array.isArray(encapsList)) {
-      for (const enc of encapsList) {
-        if (enc.juror_id && (enc.kem_ciphertext || enc.ciphertext) && enc.wrapped_key) {
-          const kemCipher = enc.kem_ciphertext || enc.ciphertext;
+    const encapsulations = req.body.encapsulations || req.body.kem_ciphertext || ring_signature.encapsulations || [];
+    if (Array.isArray(encapsulations) && encapsulations.length > 0) {
+      for (const encap of encapsulations) {
+        if (encap.juror_id || encap.pubkey || encap.target_pubkey) {
+          const jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey;
+          const kemCipher = encap.kem_ciphertext || encap.ciphertext || "";
+          const wrapped = encap.wrapped_key || encap.wrappedKey || "";
           await pool.query({
             text: `
               INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key)
               VALUES ($1, $2, $3, $4);
             `,
-            values: [ipfs_hash, enc.juror_id, kemCipher, enc.wrapped_key]
+            values: [ipfs_hash, jurorPub, kemCipher, wrapped]
           });
         }
       }
