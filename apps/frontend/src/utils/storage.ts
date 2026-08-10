@@ -202,16 +202,12 @@ const omnivorousToBytes = (data: any): Uint8Array => {
 
 export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: CryptoKey): Promise<Uint8Array> => {
   try {
-    // Omnivorous parse guarantees we get a Uint8Array back without crashing
     const rawBytes = omnivorousToBytes(encryptedData);
 
-    // Bypass logic for unencrypted raw keys (ML-KEM keys are large)
-    if (!encryptionKey || rawBytes.length === 1184 || rawBytes.length === 2400 || rawBytes.length === 3168 || rawBytes.length > 1000) {
-      console.warn("🚨 Bypassing local decryption: Payload matches raw key signature or no key provided.");
+    if (!encryptionKey) {
       return rawBytes;
     }
 
-    // If it's too small to contain a 12-byte IV + ciphertext, just return it
     if (rawBytes.length <= 12) {
       return rawBytes;
     }
@@ -228,7 +224,7 @@ export const decryptStoragePayload = async (encryptedData: any, encryptionKey?: 
       );
       return new Uint8Array(decryptedBuffer);
     } catch (cryptoErr) {
-      console.warn("🚨 AES Decrypt Failed (OperationError). Falling back to raw bytes. 🚨");
+      console.warn("🚨 AES Decrypt Failed. Falling back to raw bytes. 🚨");
       return rawBytes;
     }
   } catch (err: any) {
@@ -253,12 +249,29 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
   }
 
   try {
+    const cryptoInstance = getCrypto();
+    const combinedBytes = base64ToArrayBuffer(vaultData);
+
+    if (combinedBytes.length < 12) {
+      throw new Error('Corrupted storage payload: length is insufficient.');
+    }
+
+    const iv = combinedBytes.slice(0, 12);
+    const ciphertext = combinedBytes.slice(12);
     const key = await getOrCreateStorageKey();
-    const decryptedBytes = await decryptStoragePayload(vaultData, key);
-    const decryptedString = new TextDecoder().decode(decryptedBytes).replace(/\0+$/, '');
+
+    const plaintextBuffer = await cryptoInstance.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: iv,
+      },
+      key,
+      ciphertext
+    );
+
+    const decryptedString = new TextDecoder().decode(plaintextBuffer);
     return JSON.parse(decryptedString);
   } catch (error) {
-    // 4. FAIL-SAFE PURGE BOUNDARIES
     console.error('Decryption failed. Storage is compromised or corrupted. Purging...', error);
     try {
       local.removeItem('brone_secure_vault');
@@ -270,4 +283,63 @@ export async function loadAndDecryptState(throwOnError = false): Promise<any | n
     }
     return null;
   }
+}
+
+/**
+ * Isolated function specifically for the Jury that safely fetches and decodes 
+ * the ML-KEM private key from storage without affecting global app state.
+ */
+export async function getJurorPrivateKey(): Promise<Uint8Array | null> {
+  const local = typeof localStorage !== 'undefined' ? localStorage : null;
+  if (!local) return null;
+
+  const vaultData = local.getItem('brone_secure_vault');
+  if (!vaultData) return null;
+
+  try {
+    const cryptoInstance = getCrypto();
+    let combinedBytes: Uint8Array;
+    const cleanVault = vaultData.trim();
+    if (/^[0-9a-fA-F]+$/.test(cleanVault)) {
+      const bytes = new Uint8Array(Math.ceil(cleanVault.length / 2));
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(cleanVault.substring(i * 2, i * 2 + 2), 16);
+      }
+      combinedBytes = bytes;
+    } else {
+      const binaryString = safeAtob(cleanVault);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      combinedBytes = bytes;
+    }
+
+    if (combinedBytes.length < 12) return null;
+
+    const iv = combinedBytes.slice(0, 12);
+    const ciphertext = combinedBytes.slice(12);
+    const key = await getOrCreateStorageKey();
+
+    const plaintextBuffer = await cryptoInstance.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv },
+      key,
+      ciphertext
+    );
+
+    const decryptedString = new TextDecoder().decode(plaintextBuffer);
+    const stored = JSON.parse(decryptedString);
+    if (stored && stored.pqKemPrivateKeyHex) {
+      const cleanHex = stored.pqKemPrivateKeyHex.replace(/^(ENC_GCM:|0x)/, '').trim();
+      const bytes = new Uint8Array(cleanHex.length / 2);
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
+      }
+      return bytes;
+    }
+  } catch (error) {
+    console.error('getJurorPrivateKey failed:', error);
+  }
+  return null;
 }

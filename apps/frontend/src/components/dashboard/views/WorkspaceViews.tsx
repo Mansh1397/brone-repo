@@ -9,10 +9,11 @@ import {
   RSAPublicKey
 } from "@brone/crypto-core";
 import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
-import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState, decryptStoragePayload } from "../../../utils/storage";
+import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState, decryptStoragePayload, getJurorPrivateKey } from "../../../utils/storage";
 import { uploadToIPFS } from "../../../utils/ipfsService";
 import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
 import crypto from "crypto";
+import pako from "pako";
 // @ts-ignore
 import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 // @ts-ignore
@@ -139,20 +140,27 @@ const decryptPostWithStorageKey = async (task: any, localPrivateKeyRaw: Uint8Arr
     
     const decryptedBytes = new Uint8Array(decryptedBuffer);
 
+    let unpackedBytes = decryptedBytes;
     try {
-      const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, '');
+      unpackedBytes = pako.inflate(decryptedBytes);
+    } catch (e) {
+      // Fallback if not compressed
+    }
+
+    try {
+      const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(unpackedBytes).replace(/\0+$/, '');
       
       // If it contains typical JSON braces, parse it
       if (utf8Text.startsWith('{') || utf8Text.startsWith('[')) {
         try {
           const jsonObj = JSON.parse(utf8Text);
           return jsonObj.content || jsonObj.text || JSON.stringify(jsonObj, null, 2);
-        } catch(e) {}
+        } catch(e2) {}
       }
       return utf8Text;
     } catch (e) {
-      // If fatal: true catches a non-UTF8 binary payload, convert the bytes to Hex so it's readable
-      return Array.from(decryptedBytes)
+      // Return raw bytes as a clean Hex string fallback
+      return Array.from(unpackedBytes)
         .map(b => b.toString(16).padStart(2, '0'))
         .join('');
     }
@@ -275,20 +283,27 @@ export const decryptPayload = async (task: any, localPrivateKeyRaw: Uint8Array |
       
       const decryptedBytes = new Uint8Array(decryptedBuffer);
 
+      let unpackedBytes = decryptedBytes;
       try {
-        const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(decryptedBytes).replace(/\0+$/, '');
+        unpackedBytes = pako.inflate(decryptedBytes);
+      } catch (e) {
+        // Fallback if not compressed
+      }
+
+      try {
+        const utf8Text = new TextDecoder("utf-8", { fatal: true }).decode(unpackedBytes).replace(/\0+$/, '');
         
         // If it contains typical JSON braces, parse it
         if (utf8Text.startsWith('{') || utf8Text.startsWith('[')) {
           try {
             const jsonObj = JSON.parse(utf8Text);
             return jsonObj.content || jsonObj.text || JSON.stringify(jsonObj, null, 2);
-          } catch(e) {}
+          } catch(e2) {}
         }
         return utf8Text;
       } catch (e) {
-        // If fatal: true catches a non-UTF8 binary payload, convert the bytes to Hex so it's readable
-        return Array.from(decryptedBytes)
+        // Return raw bytes as a clean Hex string fallback
+        return Array.from(unpackedBytes)
           .map(b => b.toString(16).padStart(2, '0'))
           .join('');
       }
@@ -372,7 +387,48 @@ const decryptPayloadWithKey = async (encryptedStr: string, aesKey: Uint8Array): 
     ciphertext
   );
 
-  return new TextDecoder().decode(plaintextBuffer);
+  const decryptedBytes = new Uint8Array(plaintextBuffer);
+  let unpackedBytes = decryptedBytes;
+  try {
+    unpackedBytes = pako.inflate(decryptedBytes);
+  } catch (e) {}
+  return new TextDecoder().decode(unpackedBytes);
+};
+
+const decryptSelfPostPayload = async (encryptedStr: string): Promise<string> => {
+  try {
+    const key = await getOrCreateStorageKey();
+    if (!encryptedStr.startsWith("ENC_GCM:")) {
+      throw new Error("Invalid payload format");
+    }
+    const base64 = encryptedStr.substring(8);
+    const binaryString = window.atob(base64.trim());
+    const len = binaryString.length;
+    const combinedBytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      combinedBytes[i] = binaryString.charCodeAt(i);
+    }
+    if (combinedBytes.length < 12) {
+      throw new Error("Insufficient payload length");
+    }
+    const iv = combinedBytes.slice(0, 12);
+    const ciphertext = combinedBytes.slice(12);
+
+    const decryptedBuffer = await window.crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      ciphertext
+    );
+    const decryptedBytes = new Uint8Array(decryptedBuffer);
+    let unpackedBytes = decryptedBytes;
+    try {
+      unpackedBytes = pako.inflate(decryptedBytes);
+    } catch (e) {}
+    return new TextDecoder().decode(unpackedBytes);
+  } catch (err: any) {
+    console.error("decryptSelfPostPayload failed:", err);
+    return `[DECRYPTION FAILED]: ${err.message || 'OperationError'}`;
+  }
 };
 
 const decryptPayloadForJuror = async (
@@ -413,9 +469,7 @@ const decryptPayloadForJuror = async (
     }
   }
 
-  const key = await getOrCreateStorageKey();
-  const decryptedBytes = await decryptStoragePayload(encryptedStr, key);
-  return new TextDecoder().decode(decryptedBytes);
+  return await decryptSelfPostPayload(encryptedStr);
 };
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
