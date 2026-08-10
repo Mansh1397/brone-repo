@@ -228,13 +228,23 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           console.warn("[DECRYPTION ATTEMPT DATA]:", {
             hasKemCiphertext: !!task.kem_ciphertext,
             kemLength: task.kem_ciphertext?.length,
+            hasWrappedKey: !!task.wrapped_key,
+            wrappedKeyLength: task.wrapped_key?.length,
             hasEncryptedPayload: !!task.encrypted_payload,
             payloadPrefix: task.encrypted_payload?.substring(0, 15)
           });
           const payload = task.encrypted_payload;
           if (payload && payload.startsWith("ENC_GCM:")) {
             const myKeys = await getOrCreateKeyPair();
-            const decrypted = await decryptPayloadForJuror(payload, task.ring_signature, myKeys);
+            const ringSigWithEncap = {
+              ...task.ring_signature,
+              encapsulation: task.ring_signature?.encapsulation || {
+                juror_id: myKeys.publicKeyHex.split(':')[0],
+                kem_ciphertext: task.kem_ciphertext,
+                wrapped_key: task.wrapped_key
+              }
+            };
+            const decrypted = await decryptPayloadForJuror(payload, ringSigWithEncap, myKeys);
             if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
               const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
               if (active) {
@@ -1085,6 +1095,7 @@ export const JuryDuties: React.FC = () => {
             keyHash,
             encrypted_payload: item.encrypted_payload || "",
             kem_ciphertext: item.kem_ciphertext || "",
+            wrapped_key: item.wrapped_key || "",
             ring_signature: item.ring_signature
           };
         });
