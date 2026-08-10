@@ -80,7 +80,8 @@ const encryptPayload = async (text: string): Promise<string> => {
 };
 
 // 3. Decrypt ciphertext payload using local storage key (AES-GCM)
-const decryptPayload = async (encryptedStr: string): Promise<string> => {
+// 3. Decrypt ciphertext payload using local storage key (AES-GCM)
+const decryptStoragePayload = async (encryptedStr: string): Promise<string> => {
   if (!encryptedStr.startsWith("ENC_GCM:")) {
     throw new Error("Invalid payload format");
   }
@@ -112,6 +113,126 @@ const decryptPayload = async (encryptedStr: string): Promise<string> => {
   );
 
   return new TextDecoder().decode(plaintextBuffer);
+};
+
+const decodePayloadBytes = (payloadStr: string): Uint8Array => {
+  if (!payloadStr) return new Uint8Array();
+  if (payloadStr.startsWith("ENC_GCM:")) {
+    const base64 = payloadStr.substring(8);
+    const binaryString = window.atob(base64.trim());
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
+  const cleanHex = payloadStr.replace(/^0x/, '').trim();
+  if (/^[0-9a-fA-F]+$/.test(cleanHex)) {
+    const bytes = new Uint8Array(Math.ceil(cleanHex.length / 2));
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(cleanHex.substring(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
+  }
+  try {
+    const binaryString = window.atob(payloadStr.trim());
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  } catch (e) {
+    return new TextEncoder().encode(payloadStr);
+  }
+};
+
+export const decryptPayload = async (task: any, localPrivateKeyRaw: Uint8Array | string) => {
+  try {
+    // STEP 1: Ensure Local Private Key is Bytes
+    let privKeyBytes: Uint8Array;
+    if (typeof localPrivateKeyRaw === 'string') {
+      privKeyBytes = hexToBytes(localPrivateKeyRaw);
+    } else {
+      privKeyBytes = localPrivateKeyRaw;
+    }
+
+    // STEP 2: Decode Network Payload
+    const kemBytes = hexToBytes(task.kem_ciphertext);
+    const wrappedKeyBytes = hexToBytes(task.wrapped_key);
+    const payloadBytes = decodePayloadBytes(task.encrypted_payload);
+
+    if (kemBytes.length === 0 || wrappedKeyBytes.length === 0) {
+      throw new Error("Invalid KEM or Wrapped Key bytes (length 0).");
+    }
+
+    // STEP 3: Decapsulate ML-KEM
+    let sharedSecretBytes;
+    try {
+      sharedSecretBytes = ml_kem1024.decapsulate(kemBytes, privKeyBytes); 
+    } catch (err) {
+      throw new Error(`ML-KEM Decapsulate failed: ${err}`);
+    }
+
+    // STEP 4: Import Wrapping Key (AES-KW)
+    let wrappingKey;
+    try {
+      wrappingKey = await crypto.subtle.importKey(
+        "raw", sharedSecretBytes, "AES-KW", false, ["unwrapKey"]
+      );
+    } catch (err) {
+      throw new Error(`Import Wrapping Key failed: ${err}`);
+    }
+
+    // STEP 5: Unwrap the AES-GCM Key
+    let unwrappedAesKey;
+    try {
+      unwrappedAesKey = await crypto.subtle.unwrapKey(
+        "raw", 
+        wrappedKeyBytes, 
+        wrappingKey, 
+        "AES-KW", 
+        { name: "AES-GCM", length: 256 }, 
+        false, 
+        ["decrypt"]
+      );
+    } catch (err) {
+      console.warn("AES-KW unwrap failed, trying AES-GCM fallback...");
+      try {
+        const gcmWrappingKey = await crypto.subtle.importKey(
+          "raw", sharedSecretBytes, "AES-GCM", false, ["unwrapKey"]
+        );
+        unwrappedAesKey = await crypto.subtle.unwrapKey(
+          "raw",
+          wrappedKeyBytes,
+          gcmWrappingKey,
+          { name: "AES-GCM", iv: new Uint8Array(12) },
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["decrypt"]
+        );
+      } catch (err2) {
+        throw new Error(`UnwrapKey failed: ${err} | Fallback unwrap failed: ${err2}`);
+      }
+    }
+
+    // STEP 6: Decrypt the Final Payload
+    try {
+      const iv = payloadBytes.slice(0, 12);
+      const ciphertext = payloadBytes.slice(12);
+      const decryptedBuffer = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        unwrappedAesKey,
+        ciphertext
+      );
+      return new TextDecoder().decode(decryptedBuffer);
+    } catch (err) {
+      throw new Error(`Final Payload AES Decrypt failed: ${err}`);
+    }
+
+  } catch (masterErr: any) {
+    console.error("🚨 DECRYPT PAYLOAD MASTER CRASH 🚨", masterErr);
+    throw masterErr; // Pass up to the UI
+  }
 };
 
 const encryptPayloadWithKey = async (text: string, aesKey: Uint8Array): Promise<string> => {
@@ -192,9 +313,6 @@ const decryptPayloadForJuror = async (
   ringSignature: any,
   myKeys: any
 ): Promise<string> => {
-  let currentStep = "1. Initialization";
-  let diagInfo = "";
-
   if (ringSignature && myKeys?.kemPrivateKey) {
     const myDsaPub = myKeys.publicKeyHex.split(':')[0];
     let match = null;
@@ -209,91 +327,26 @@ const decryptPayloadForJuror = async (
 
     if (match && typeof match.kem_ciphertext === 'string' && typeof match.wrapped_key === 'string') {
       try {
-        currentStep = "2. Decoding Hex Strings";
-        const kemBytes = hexToBytes(match.kem_ciphertext);
-        const wrappedKeyBytes = hexToBytes(match.wrapped_key);
-        diagInfo += `KEM len: ${kemBytes.length}, Wrap len: ${wrappedKeyBytes.length} | `;
-
-        console.warn("🚨 [DECRYPTION DIAGNOSTICS] 🚨");
-        console.warn("- KEM Bytes Length:", kemBytes.length);
-        console.warn("- Wrapped Key Bytes Length:", wrappedKeyBytes.length);
-        console.warn("- Payload Bytes Length:", hexToBytes(encryptedStr).length);
-
-        currentStep = "3. Decapsulating ML-KEM";
-        let sharedSecretBytes;
-        try {
-          sharedSecretBytes = ml_kem1024.decapsulate(kemBytes, myKeys.kemPrivateKey);
-          diagInfo += `Secret len: ${sharedSecretBytes?.length} | `;
-        } catch (e) {
-          console.error("🚨 CRASH IN DECAPSULATE 🚨", e);
-          throw e;
-        }
-
-        currentStep = "4. Importing Wrapping Key";
-        const wrappingKey = await window.crypto.subtle.importKey(
-          "raw",
-          sharedSecretBytes,
-          "AES-KW",
-          false,
-          ["unwrapKey"]
-        );
-
-        currentStep = "5. Unwrapping AES Key (AES-KW)";
-        let unwrappedAesKey: CryptoKey | null = null;
-        try {
-          unwrappedAesKey = await window.crypto.subtle.unwrapKey(
-            "raw",
-            wrappedKeyBytes,
-            wrappingKey,
-            "AES-KW",
-            { name: "AES-GCM", length: 256 },
-            true,
-            ["decrypt"]
-          );
-        } catch (e) {
-          console.error("🚨 CRASH IN UNWRAPKEY 🚨", e);
-          console.warn("AES-KW unwrap failed, attempting AES-GCM fallback...");
-          try {
-            currentStep = "5a. Fallback Importing Wrapping Key";
-            const gcmWrappingKey = await window.crypto.subtle.importKey(
-              "raw",
-              sharedSecretBytes,
-              "AES-GCM",
-              false,
-              ["unwrapKey"]
-            );
-            currentStep = "5b. Fallback Unwrapping AES Key (AES-GCM)";
-            unwrappedAesKey = await window.crypto.subtle.unwrapKey(
-              "raw",
-              wrappedKeyBytes,
-              gcmWrappingKey,
-              { name: "AES-GCM", iv: new Uint8Array(12) },
-              { name: "AES-GCM", length: 256 },
-              true,
-              ["decrypt"]
-            );
-          } catch (e2) {
-            console.error("🚨 CRASH IN FALLBACK UNWRAPKEY 🚨", e2);
-            throw new Error(`Unwrap failed for both AES-KW and AES-GCM. Secret length: ${sharedSecretBytes.length}, Wrapped length: ${wrappedKeyBytes.length}`);
-          }
-        }
-
-        currentStep = "6. Decrypting Payload";
-        const rawAesKeyBuffer = await window.crypto.subtle.exportKey("raw", unwrappedAesKey);
-        const aesKeyBytes = new Uint8Array(rawAesKeyBuffer);
-        const decryptedText = await decryptPayloadWithKey(encryptedStr, aesKeyBytes);
-
-        currentStep = "7. Success";
-        return decryptedText;
+        const task = {
+          kem_ciphertext: match.kem_ciphertext,
+          wrapped_key: match.wrapped_key,
+          encrypted_payload: encryptedStr
+        };
+        return await decryptPayload(task, myKeys.kemPrivateKey);
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
         const errorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-        return `[DECRYPTION FAILED]: Step: ${currentStep} | Diag: ${diagInfo} | Error: ${errorMsg}`;
+        let step = "Unknown";
+        if (errorMsg.includes("Decapsulate failed")) step = "3. Decapsulating ML-KEM";
+        else if (errorMsg.includes("Import Wrapping Key")) step = "4. Importing Wrapping Key";
+        else if (errorMsg.includes("UnwrapKey")) step = "5. Unwrapping AES Key (AES-KW)";
+        else if (errorMsg.includes("Final Payload AES")) step = "6. Decrypting Payload";
+        return `[DECRYPTION FAILED]: Step: ${step} | Diag: N/A | Error: ${errorMsg}`;
       }
     }
   }
 
-  return await decryptPayload(encryptedStr);
+  return await decryptStoragePayload(encryptedStr);
 };
 
 // 4. React component to fetch and decrypt IPFS descriptions client-side
