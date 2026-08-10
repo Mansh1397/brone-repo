@@ -551,9 +551,16 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
     const wrappingKey = await subtle.importKey("raw", secret, "AES-KW", false, ["unwrapKey"]);
 
     currentStep = `Unwrap AES Key (Wrap Len: ${wrappedBytes.length})`;
-    const aesKey = await subtle.unwrapKey(
-      "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
-    );
+    let aesKey;
+    try {
+      aesKey = await subtle.unwrapKey(
+        "raw", wrappedBytes, wrappingKey, "AES-KW", { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+      );
+    } catch (unwrapErr: any) {
+      // If it fails here, it means ML-KEM implicitly rejected the Private Key.
+      // This post was encrypted for someone else!
+      return "🔒 Locked: Post encrypted for a different Juror.";
+    }
 
     currentStep = `Decrypt Payload (Payload Len: ${payloadBytes.length})`;
     const iv = payloadBytes.slice(0, 12);
