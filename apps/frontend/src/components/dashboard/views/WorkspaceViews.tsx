@@ -227,7 +227,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
             const decrypted = await decryptPayloadForJuror(payload, task.ring_signature, myKeys);
             if (active) setText(decrypted);
           } else {
-            console.log("[RENDER CHECK] Payload starts with ENC_GCM?:", task.encrypted_payload?.startsWith("ENC_GCM:"), "Actual payload string:", task.encrypted_payload?.substring(0, 30));
+            console.warn("[RENDER CHECK] Payload starts with ENC_GCM?:", task.encrypted_payload?.startsWith("ENC_GCM:"), "Actual payload string:", task.encrypted_payload?.substring(0, 30));
             if (active) setText(payload || fallbackText || "Payload Encrypted - Missing Shard Credentials");
           }
           return;
@@ -253,6 +253,18 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
       active = false;
     };
   }, [ipfsHash, fallbackText, task]);
+
+  if (task && (!task.encrypted_payload || !task.encrypted_payload.startsWith("ENC_GCM:"))) {
+    return (
+      <div style={{ border: '2px solid red', padding: '10px', color: 'red' }}>
+        <h4>🚨 PAYLOAD MISSING DEBUG 🚨</h4>
+        <p>Expected encrypted_payload, but received:</p>
+        <pre style={{ fontSize: '10px', overflowX: 'auto' }}>
+          {JSON.stringify(task, null, 2)}
+        </pre>
+      </div>
+    );
+  }
 
   if (loading) {
     return <span className="animate-pulse text-gray-500 font-mono text-xs">Decrypting vault payload...</span>;
@@ -967,14 +979,14 @@ export const JuryDuties: React.FC = () => {
           },
         } as any);
 
-        console.log("RAW JURY TASKS:", response.data);
-        console.log("[JURY QUEUE RAW RESPONSE]:", response.data);
+        console.warn("RAW JURY TASKS:", response.data);
+        console.warn("[JURY QUEUE RAW RESPONSE]:", response.data);
         if (Array.isArray(response.data)) {
           response.data.forEach((item: any, index: number) => {
-            console.log(`[JURY ITEM ${index}] encrypted_payload present:`, !!item.encrypted_payload);
-            console.log(`[JURY ITEM ${index}] kem_ciphertext present:`, !!item.kem_ciphertext);
+            console.warn(`[JURY ITEM ${index}] encrypted_payload present:`, !!item.encrypted_payload);
+            console.warn(`[JURY ITEM ${index}] kem_ciphertext present:`, !!item.kem_ciphertext);
             if (item.encrypted_payload) {
-              console.log(`[JURY ITEM ${index}] payload prefix:`, item.encrypted_payload.substring(0, 20));
+              console.warn(`[JURY ITEM ${index}] payload prefix:`, item.encrypted_payload.substring(0, 20));
             }
           });
         }

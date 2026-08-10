@@ -808,6 +808,14 @@ if (process.env.NODE_ENV !== "test") {
     try {
       await initDB();
 
+      try {
+        console.warn("[NUCLEAR WIPE] Erasing all users, posts, and votes...");
+        await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys CASCADE;`);
+        console.warn("[NUCLEAR WIPE] Database is now completely empty.");
+      } catch (e) {
+        console.warn("[NUCLEAR WIPE ERROR]:", e);
+      }
+
       // Zero-Config Environment-Gated Stale Post Cleanup Routine
       const isProductionDB = process.env.PGHOST === 'production-db-cluster.internal';
       const shouldPurgeStalePosts = process.env.NODE_ENV !== 'production' || !isProductionDB;
