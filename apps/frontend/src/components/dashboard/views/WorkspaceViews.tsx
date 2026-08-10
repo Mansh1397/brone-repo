@@ -192,6 +192,9 @@ const decryptPayloadForJuror = async (
   ringSignature: any,
   myKeys: any
 ): Promise<string> => {
+  let currentStep = "1. Initialization";
+  let diagInfo = "";
+
   if (ringSignature && myKeys?.kemPrivateKey) {
     const myDsaPub = myKeys.publicKeyHex.split(':')[0];
     let match = null;
@@ -206,31 +209,38 @@ const decryptPayloadForJuror = async (
 
     if (match && typeof match.kem_ciphertext === 'string' && typeof match.wrapped_key === 'string') {
       try {
+        currentStep = "2. Decoding Hex Strings";
         const kemBytes = hexToBytes(match.kem_ciphertext);
         const wrappedKeyBytes = hexToBytes(match.wrapped_key);
+        diagInfo += `KEM len: ${kemBytes.length}, Wrap len: ${wrappedKeyBytes.length} | `;
 
         console.warn("🚨 [DECRYPTION DIAGNOSTICS] 🚨");
         console.warn("- KEM Bytes Length:", kemBytes.length);
         console.warn("- Wrapped Key Bytes Length:", wrappedKeyBytes.length);
         console.warn("- Payload Bytes Length:", hexToBytes(encryptedStr).length);
 
+        currentStep = "3. Decapsulating ML-KEM";
         let sharedSecretBytes;
         try {
           sharedSecretBytes = ml_kem1024.decapsulate(kemBytes, myKeys.kemPrivateKey);
+          diagInfo += `Secret len: ${sharedSecretBytes?.length} | `;
         } catch (e) {
           console.error("🚨 CRASH IN DECAPSULATE 🚨", e);
           throw e;
         }
 
+        currentStep = "4. Importing Wrapping Key";
+        const wrappingKey = await window.crypto.subtle.importKey(
+          "raw",
+          sharedSecretBytes,
+          "AES-KW",
+          false,
+          ["unwrapKey"]
+        );
+
+        currentStep = "5. Unwrapping AES Key (AES-KW)";
         let unwrappedAesKey: CryptoKey | null = null;
         try {
-          const wrappingKey = await window.crypto.subtle.importKey(
-            "raw",
-            sharedSecretBytes,
-            "AES-KW",
-            false,
-            ["unwrapKey"]
-          );
           unwrappedAesKey = await window.crypto.subtle.unwrapKey(
             "raw",
             wrappedKeyBytes,
@@ -244,6 +254,7 @@ const decryptPayloadForJuror = async (
           console.error("🚨 CRASH IN UNWRAPKEY 🚨", e);
           console.warn("AES-KW unwrap failed, attempting AES-GCM fallback...");
           try {
+            currentStep = "5a. Fallback Importing Wrapping Key";
             const gcmWrappingKey = await window.crypto.subtle.importKey(
               "raw",
               sharedSecretBytes,
@@ -251,6 +262,7 @@ const decryptPayloadForJuror = async (
               false,
               ["unwrapKey"]
             );
+            currentStep = "5b. Fallback Unwrapping AES Key (AES-GCM)";
             unwrappedAesKey = await window.crypto.subtle.unwrapKey(
               "raw",
               wrappedKeyBytes,
@@ -266,17 +278,17 @@ const decryptPayloadForJuror = async (
           }
         }
 
-        // 3. Export the unwrapped key to raw bytes for decryptPayloadWithKey
+        currentStep = "6. Decrypting Payload";
         const rawAesKeyBuffer = await window.crypto.subtle.exportKey("raw", unwrappedAesKey);
         const aesKeyBytes = new Uint8Array(rawAesKeyBuffer);
+        const decryptedText = await decryptPayloadWithKey(encryptedStr, aesKeyBytes);
 
-        return await decryptPayloadWithKey(encryptedStr, aesKeyBytes);
+        currentStep = "7. Success";
+        return decryptedText;
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        const errorMsg = err instanceof Error || (err && err.name)
-          ? `${err.name || 'Error'}: ${err.message || err}`
-          : (err.message || JSON.stringify(err) || err.toString());
-        return `[DECRYPTION FAILED]: ${errorMsg}`;
+        const errorMsg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        return `[DECRYPTION FAILED]: Step: ${currentStep} | Diag: ${diagInfo} | Error: ${errorMsg}`;
       }
     }
   }
@@ -316,13 +328,24 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
             const decrypted = await decryptPayloadForJuror(payload, ringSigWithEncap, myKeys);
             if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
               const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
+              let stepName = "Unknown";
+              let diagnostics = "N/A";
+              let cleanError = errorMsg;
+
+              if (errorMsg.includes("Step:") && errorMsg.includes("Diag:")) {
+                const parts = errorMsg.split('|');
+                stepName = parts[0].replace("Step:", "").trim();
+                diagnostics = parts[1].replace("Diag:", "").trim();
+                cleanError = parts.slice(2).join('|').replace("Error:", "").trim();
+              }
+
               if (active) {
                 setText(
                   <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
                     <h4>🚨 DECRYPTION CRASH 🚨</h4>
-                    <p><strong>Error:</strong> {errorMsg}</p>
-                    <p><strong>KEM Ciphertext:</strong> {task.kem_ciphertext ? task.kem_ciphertext.substring(0, 50) + '...' : 'MISSING'}</p>
-                    <p><strong>Encrypted Payload:</strong> {task.encrypted_payload ? task.encrypted_payload.substring(0, 50) + '...' : 'MISSING'}</p>
+                    <p><strong>Failed at Step:</strong> {stepName}</p>
+                    <p><strong>Diagnostics:</strong> {diagnostics}</p>
+                    <p><strong>Error:</strong> {cleanError}</p>
                   </div>
                 );
               }
@@ -343,13 +366,24 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           const decrypted = await decryptPayloadForJuror(payload, response.data.ring_signature, myKeys);
           if (typeof decrypted === 'string' && decrypted.startsWith('[DECRYPTION FAILED]:')) {
             const errorMsg = decrypted.replace('[DECRYPTION FAILED]:', '').trim();
+            let stepName = "Unknown";
+            let diagnostics = "N/A";
+            let cleanError = errorMsg;
+
+            if (errorMsg.includes("Step:") && errorMsg.includes("Diag:")) {
+              const parts = errorMsg.split('|');
+              stepName = parts[0].replace("Step:", "").trim();
+              diagnostics = parts[1].replace("Diag:", "").trim();
+              cleanError = parts.slice(2).join('|').replace("Error:", "").trim();
+            }
+
             if (active) {
               setText(
                 <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
                   <h4>🚨 DECRYPTION CRASH 🚨</h4>
-                  <p><strong>Error:</strong> {errorMsg}</p>
-                  <p><strong>KEM Ciphertext:</strong> {response.data.kem_ciphertext ? response.data.kem_ciphertext.substring(0, 50) + '...' : 'MISSING'}</p>
-                  <p><strong>Encrypted Payload:</strong> {payload ? payload.substring(0, 50) + '...' : 'MISSING'}</p>
+                  <p><strong>Failed at Step:</strong> {stepName}</p>
+                  <p><strong>Diagnostics:</strong> {diagnostics}</p>
+                  <p><strong>Error:</strong> {cleanError}</p>
                 </div>
               );
             }
