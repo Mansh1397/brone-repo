@@ -721,6 +721,9 @@ const handleIPFSExtraction = async (req: any, res: any) => {
 const handleGetArbitrationTasks = async (req: any, res: any) => {
   try {
     const jurorPubkey = req.user?.id || "";
+    const jurorPubkeyParam = (req.query.juror_pubkey as string) || "";
+    const jurorId = jurorPubkeyParam.split(':')[0] || jurorPubkey;
+
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const result = await pool.query(`
       SELECT ipfs_hash, geohash, ring_signature, encrypted_payload, author_pubkey, status, sprt_score, submitted_at 
@@ -733,7 +736,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
       let kem_ciphertext = "";
       if (ringSig && Array.isArray(ringSig.encapsulations) && ringSig.encapsulations.length > 0) {
-        const matchingEnc = ringSig.encapsulations.find((e: any) => e.juror_id === jurorPubkey);
+        const matchingEnc = ringSig.encapsulations.find((e: any) => e.juror_id === jurorId);
         kem_ciphertext = matchingEnc ? matchingEnc.kem_ciphertext : (ringSig.encapsulations[0].kem_ciphertext || "");
       }
       return {

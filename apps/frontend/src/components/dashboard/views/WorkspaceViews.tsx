@@ -1022,7 +1022,8 @@ export const JuryDuties: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await apiClient.get("arbitration/tasks", {
+        const myKeys = await getOrCreateKeyPair();
+        const response = await apiClient.get(`arbitration/tasks?juror_pubkey=${encodeURIComponent(myKeys.publicKeyHex || "")}`, {
           signal: abortController.signal,
           cache: "no-store",
           headers: {
