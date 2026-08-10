@@ -544,8 +544,7 @@ const handlePostArbitration = async (req: any, res: any) => {
             ipfs_hash VARCHAR(255) NOT NULL,
             juror_pubkey TEXT NOT NULL,
             kem_ciphertext TEXT NOT NULL,
-            wrapped_key TEXT DEFAULT '',
-            PRIMARY KEY (ipfs_hash, juror_pubkey)
+            wrapped_key TEXT DEFAULT ''
           )
         `).catch(() => {});
 
@@ -554,7 +553,7 @@ const handlePostArbitration = async (req: any, res: any) => {
           const kemCipher = encap.kem_ciphertext || encap.ciphertext || encap.encapsulation || "";
           const wrapped = encap.wrapped_key || encap.wrappedKey || "";
           await pool.query(
-            `INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+            `INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key) VALUES ($1, $2, $3, $4)`,
             [ipfs_hash, jurorPub, kemCipher, wrapped]
           );
         }
