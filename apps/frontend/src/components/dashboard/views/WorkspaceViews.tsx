@@ -1357,13 +1357,16 @@ export const ReportingHub: React.FC = () => {
         }
 
         try {
-          const safeFp = getStrictChecksum(rawJurorPubKey);
-          console.log(`[AUTHOR NETWORK] Encrypting for Juror ${jurorId} | PubKey FP: ${safeFp} | Bytes: ${jurorPubKeyBytes.length}`);
+          const rawKeyStr = String(rawJurorPubKey || '');
+          const cleanHex = rawKeyStr.replace(/^(ENC_GCM:|0x)/, '').trim();
+          const checksum = cleanHex.substring(0, 4).toLowerCase();
+
+          console.log(`[AUTHOR NETWORK] Encrypting for Juror ${jurorId} | PubKey FP: ${checksum} | Bytes: ${jurorPubKeyBytes.length}`);
           
           if (jurorPubKeyBytes.length < 1000) {
               alert(`DATABASE CORRUPTION: Juror ${jurorId}'s Public Key is only ${jurorPubKeyBytes.length} bytes! The DB column is truncating it.`);
           } else {
-              alert(`Target Juror ID: ${jurorId} | Checksum: ${safeFp}`);
+              alert(`[CHECKSUM: ${checksum}] Target Juror ID: ${jurorId}`);
           }
 
           // 4. Encapsulate specifically for THIS juror
