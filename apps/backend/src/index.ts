@@ -790,54 +790,19 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       result = await pool.query(`
         SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
         FROM decentralized_posts dp
-        LEFT JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND (pe.juror_pubkey = $3 OR pe.juror_pubkey = $4)
+        INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND (pe.juror_pubkey = $3 OR pe.juror_pubkey = $4)
         WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)
-        ORDER BY RANDOM() LIMIT 10
+        ORDER BY dp.submitted_at DESC LIMIT 10
       `, [geohashFilter, req.user?.id || "", jurorId, jurorPubkey]);
     } catch (getDbError) {
       console.warn("🚨 [DB SELECT ERROR] 🚨:", getDbError);
       throw getDbError;
     }
 
-    const posts = await Promise.all(result.rows.map(async (row: any) => {
+    const posts = result.rows.map((row: any) => {
       const ringSig = row.ring_signature ? JSON.parse(row.ring_signature) : null;
-      let kem_ciphertext = row.kem_ciphertext || "";
-      let wrapped_key = row.wrapped_key || "";
-
-      // Fallback 1: Query post_encapsulations table for any encapsulation for this post
-      if (!kem_ciphertext) {
-        try {
-          const fallbackRes = await pool.query(
-            "SELECT kem_ciphertext, wrapped_key FROM post_encapsulations WHERE ipfs_hash = $1 LIMIT 1",
-            [row.ipfs_hash]
-          );
-          if (fallbackRes.rows.length > 0) {
-            kem_ciphertext = fallbackRes.rows[0].kem_ciphertext || "";
-            wrapped_key = fallbackRes.rows[0].wrapped_key || "";
-          }
-        } catch (e) {
-          // Skip
-        }
-      }
-
-      // Fallback 2: JSON parsing
-      if (!kem_ciphertext) {
-        const encapsulations = row.encapsulations || row.keys || ringSig?.encapsulations || ringSig?.keys || [];
-
-        if (Array.isArray(encapsulations) && encapsulations.length > 0) {
-          const matchingEnc = encapsulations.find((e: any) => e.juror_id === jurorId);
-          if (matchingEnc) {
-            kem_ciphertext = matchingEnc.kem_ciphertext || matchingEnc.ciphertext || "";
-            wrapped_key = matchingEnc.wrapped_key || matchingEnc.wrappedKey || "";
-          } else {
-            kem_ciphertext = encapsulations[0].kem_ciphertext || encapsulations[0].ciphertext || "";
-            wrapped_key = encapsulations[0].wrapped_key || encapsulations[0].wrappedKey || "";
-          }
-        } else if (ringSig && typeof ringSig.kem_ciphertext === 'string') {
-          kem_ciphertext = ringSig.kem_ciphertext;
-          wrapped_key = ringSig.wrapped_key || ringSig.wrappedKey || "";
-        }
-      }
+      const kem_ciphertext = row.kem_ciphertext || "";
+      const wrapped_key = row.wrapped_key || "";
 
       return {
         id: row.ipfs_hash,
@@ -845,16 +810,16 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
         hasKem: !!kem_ciphertext,
         hasPayload: !!row.encrypted_payload,
         hasWrappedKey: !!wrapped_key,
-        kem_ciphertext: kem_ciphertext || row.kem_ciphertext || row.encapsulation || "",
-        wrapped_key: wrapped_key || row.wrapped_key || "",
+        kem_ciphertext: kem_ciphertext,
+        wrapped_key: wrapped_key,
         encrypted_payload: row.encrypted_payload || "",
         ring_signature: ringSig || "",
         author_pubkey: row.author_pubkey || "",
         created_at: row.submitted_at
       };
-    }));
+    }).filter((post: any) => post.hasKem && post.hasPayload && post.hasWrappedKey);
 
-    console.warn("[OUTGOING JURY TASKS]:", posts.map(t => ({ id: t.ipfs_hash, hasKem: t.hasKem, hasWrappedKey: t.hasWrappedKey, hasPayload: t.hasPayload })));
+    console.warn("[OUTGOING JURY TASKS]:", posts.map((t: any) => ({ id: t.ipfs_hash, hasKem: t.hasKem, hasWrappedKey: t.hasWrappedKey, hasPayload: t.hasPayload })));
 
     return res.status(200).json(posts);
   } catch (error) {
