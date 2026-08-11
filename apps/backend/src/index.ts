@@ -884,7 +884,7 @@ if (process.env.NODE_ENV !== "test") {
 
       try {
         console.warn("[NUCLEAR WIPE] Erasing all users, posts, and votes...");
-        await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger, otps CASCADE;`);
+        await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
         console.warn("[NUCLEAR WIPE] Database is now completely empty.");
       } catch (e) {
         console.warn("[NUCLEAR WIPE ERROR]:", e);
@@ -897,7 +897,7 @@ if (process.env.NODE_ENV !== "test") {
       if (shouldPurgeStalePosts) {
         try {
           // Nuclear Clean Slate database flush
-          await pool.query(`TRUNCATE TABLE signatures, decentralized_posts, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger, otps CASCADE;`);
+          await pool.query(`TRUNCATE TABLE signatures, decentralized_posts, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
           console.log('[NUCLEAR RESET] Clean slate database flush completed successfully.');
           
           await pool.query(`
