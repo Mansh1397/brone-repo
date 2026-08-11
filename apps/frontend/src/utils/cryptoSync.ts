@@ -6,8 +6,14 @@ import { apiClient } from '../api/apiClient';
  */
 export function schedulePublicKeyRegistration(publicKeyHex: string): void {
   // highly randomized delay between 15 seconds (15000ms) and 5 minutes (300000ms)
-  const delayMs = Math.random() * (300000 - 15000) + 15000;
-  console.log(`[ZK SECURITY] Delaying public key registration by ${Math.round(delayMs / 1000)} seconds to prevent temporal correlation...`);
+  const isLocal = typeof window !== 'undefined' && 
+    (window.location.hostname === 'localhost' || 
+     window.location.hostname === '127.0.0.1' || 
+     window.location.hostname.includes('gitpod') ||
+     window.location.hostname.includes('codesandbox'));
+
+  const delayMs = isLocal ? 500 : (Math.random() * (300000 - 15000) + 15000);
+  console.log(`[ZK SECURITY] Delaying public key registration by ${Math.round(delayMs / 1000)} seconds (isLocal: ${isLocal})...`);
 
   setTimeout(async () => {
     try {
