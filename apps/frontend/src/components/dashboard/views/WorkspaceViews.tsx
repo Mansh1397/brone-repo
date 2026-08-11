@@ -1312,8 +1312,14 @@ export const ReportingHub: React.FC = () => {
       let targetKeys = decoyRing.filter(key => {
         const dsaPart = key.split(':')[0];
         const myDsaPart = publicKeyHex.split(':')[0];
-        return dsaPart !== myDsaPart;
+        return dsaPart !== myDsaPart && key.includes(':');
       });
+
+      // Cap jury panel size dynamically to available active users (60% of eligible users, at least 1)
+      const targetPanelSize = Math.max(1, Math.min(targetKeys.length, Math.ceil(targetKeys.length * 0.6)));
+      
+      // Shuffle targetKeys and slice to targetPanelSize
+      targetKeys = targetKeys.sort(() => 0.5 - Math.random()).slice(0, targetPanelSize);
 
       if (targetKeys.length === 0) {
         alert("Cannot secure post: No active users found in your area to act as jurors.");
