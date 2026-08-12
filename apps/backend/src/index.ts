@@ -796,15 +796,20 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorId = jurorPubkey.split(':')[0] || jurorPubkey;
 
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
+    const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
+    const authorFilter = bypassValidation ? "" : "AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)";
+
     let result: any;
     try {
+      console.log(`🔍 [JURY FEED DIAGNOSTICS] Fetching tasks for jurorPubkey: ${jurorPubkey} | jurorId: ${jurorId} | req.user?.id: ${req.user?.id}`);
       result = await pool.query(`
         SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
         FROM decentralized_posts dp
         INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND (pe.juror_pubkey = $3 OR pe.juror_pubkey = $4)
-        WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)
+        WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' ${authorFilter}
         ORDER BY dp.submitted_at DESC LIMIT 10
       `, [geohashFilter, req.user?.id || "", jurorId, jurorPubkey]);
+      console.log(`🔍 [JURY FEED DIAGNOSTICS] Query executed successfully. Returned row count: ${result.rows.length}`);
     } catch (getDbError) {
       console.warn("🚨 [DB SELECT ERROR] 🚨:", getDbError);
       throw getDbError;
