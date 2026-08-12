@@ -564,14 +564,18 @@ const handlePostArbitration = async (req: any, res: any) => {
           )
         `).catch(() => {});
 
+        console.log(`🔍 [JURY TASK CREATION] Inserting ${encapArray.length} encapsulations for IPFS Hash: ${ipfs_hash}`);
         for (const encap of encapArray) {
           const jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey || "";
           const kemCipher = encap.kem_ciphertext || encap.ciphertext || encap.encapsulation || "";
           const wrapped = encap.wrapped_key || encap.wrappedKey || "";
-          await pool.query(
-            `INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key) VALUES ($1, $2, $3, $4)`,
+          
+          console.log(`🔍 [JURY TASK CREATION] Enrolling Juror: ${jurorPub?.substring(0, 16)}... | KEM Ciphertext Len: ${kemCipher?.length} | Wrapped Key Len: ${wrapped?.length}`);
+          const insertRes = await pool.query(
+            `INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key) VALUES ($1, $2, $3, $4) RETURNING *;`,
             [ipfs_hash, jurorPub, kemCipher, wrapped]
           );
+          console.log(`🔍 [JURY TASK CREATION] Relational row created successfully. Affected count: ${insertRes.rows.length}`);
         }
       } catch (dbErr) {
         console.warn("🚨 [DB INSERT ERROR] 🚨:", dbErr);
