@@ -352,30 +352,43 @@ v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/increment", handleMetricIncrement);
 
 const handleGetPublicKeys = async (req: any, res: any) => {
+  console.log("🔍 [JURY DIAGNOSTICS] GET /public-keys requested");
   try {
+    const dbKeysRes = await pool.query("SELECT key_hash, public_key_hex, created_at FROM anonymous_public_keys;");
+    console.log("🔍 [JURY DIAGNOSTICS] Total registered keys in DB:", dbKeysRes.rows.length);
+    console.log("🔍 [JURY DIAGNOSTICS] Keys details in DB:", dbKeysRes.rows.map((row: any) => ({
+      hash: row.key_hash?.substring(0, 8),
+      created_at: row.created_at,
+      hasColon: row.public_key_hex?.includes(':'),
+      keyPrefix: row.public_key_hex?.substring(0, 16)
+    })));
+
     const result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY created_at DESC LIMIT 11;");
     const keys = result.rows.map((row: any) => row.public_key_hex);
+    console.log("🔍 [JURY DIAGNOSTICS] Returning keys count:", keys.length);
     return res.status(200).json(keys);
   } catch (error: any) {
-    console.error("[KEYS ERROR] Failed to fetch public keys:", error);
+    console.error("🚨 [JURY DIAGNOSTICS ERROR] Failed to fetch public keys:", error);
     return res.status(200).json([]);
   }
 };
 
 const handleRegisterPublicKey = async (req: any, res: any) => {
+  const { public_key_hex } = req.body;
+  console.log("🔍 [JURY DIAGNOSTICS] POST /keys/register requested. KeyPrefix:", public_key_hex?.substring(0, 16));
   try {
-    const { public_key_hex } = req.body;
     if (!public_key_hex) {
       return res.status(400).json({ error: "Missing public_key_hex payload" });
     }
     const keyHash = crypto.createHash("sha256").update(public_key_hex).digest("hex");
-    await pool.query({
-      text: "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+    const insertRes = await pool.query({
+      text: "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *;",
       values: [keyHash, public_key_hex]
     });
+    console.log("🔍 [JURY DIAGNOSTICS] Inserted key successfully. Row count affected:", insertRes.rows.length);
     return res.status(200).json({ success: true });
   } catch (error: any) {
-    console.error("[KEYS ERROR] Failed to register anonymous key:", error.message || error);
+    console.error("🚨 [JURY DIAGNOSTICS ERROR] Failed to register anonymous key:", error.message || error);
     return res.status(500).json({ error: "Failed to register anonymous key" });
   }
 };

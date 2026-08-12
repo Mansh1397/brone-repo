@@ -1328,6 +1328,10 @@ export const ReportingHub: React.FC = () => {
       // Shuffle targetKeys and slice to targetPanelSize
       targetKeys = targetKeys.sort(() => 0.5 - Math.random()).slice(0, targetPanelSize);
 
+      console.warn("🔍 [JURY DIAGNOSTICS] decoyRing fetched:", decoyRing);
+      console.warn("🔍 [JURY DIAGNOSTICS] publicKeyHex (Author):", publicKeyHex);
+      console.warn("🔍 [JURY DIAGNOSTICS] targetKeys after filtering/shuffling:", targetKeys);
+
       if (targetKeys.length === 0) {
         alert("Cannot secure post: No active users found in your area to act as jurors.");
         return; // Halt submission
