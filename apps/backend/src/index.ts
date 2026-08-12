@@ -805,7 +805,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       result = await pool.query(`
         SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
         FROM decentralized_posts dp
-        INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND (pe.juror_pubkey = $3 OR pe.juror_pubkey = $4)
+        INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND (LOWER(pe.juror_pubkey) = LOWER($3) OR LOWER(pe.juror_pubkey) = LOWER($4))
         WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' ${authorFilter}
         ORDER BY dp.submitted_at DESC LIMIT 10
       `, [geohashFilter, req.user?.id || "", jurorId, jurorPubkey]);
