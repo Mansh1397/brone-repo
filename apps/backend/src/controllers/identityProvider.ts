@@ -3,6 +3,7 @@ import argon2 from 'argon2';
 import crypto from 'crypto';
 import Redis from 'ioredis';
 import axios from 'axios';
+import { pool } from './ringValidator';
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
@@ -169,6 +170,20 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
             .digest("base64url");
             
         const anonymousToken = `${encodedHeader}.${encodedPayload}.${signature}`;
+
+        // Register the client public key in the database (anonymous_public_keys)
+        if (clientPublicKey) {
+            try {
+                const keyHash = crypto.createHash("sha256").update(clientPublicKey).digest("hex");
+                const registerRes = await pool.query({
+                    text: "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *;",
+                    values: [keyHash, clientPublicKey]
+                });
+                console.log("🔍 [verifyOtp] Registered clientPublicKey in anonymous_public_keys successfully. Rows affected:", registerRes.rows.length);
+            } catch (dbErr: any) {
+                console.error("🚨 [verifyOtp ERROR] Failed to register public key in verifyOtp:", dbErr.message || dbErr);
+            }
+        }
 
         await enforceTimingPadding();
         res.status(200).json({

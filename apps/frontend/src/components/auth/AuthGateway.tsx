@@ -3,6 +3,10 @@ import { mineProofOfWork } from "../../utils/pow";
 import { apiClient } from "../../api/apiClient";
 import { encryptAndSaveState } from "../../utils/storage";
 import { schedulePublicKeyRegistration } from "../../utils/cryptoSync";
+// @ts-ignore
+import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
+// @ts-ignore
+import { ml_kem1024 } from '@noble/post-quantum/ml-kem.js';
 
 interface AuthGatewayProps {
   onAuthSuccess: (session: {
@@ -96,7 +100,7 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
     if (!otpCode || isVerifying) return;
 
     setIsVerifying(true);
-    addLog("[Crypto] Constructing new ECDSA key pair (namedCurve: P-256)...");
+    addLog("[Crypto] Constructing new ECDSA key pair (namedCurve: P-256) and post-quantum keypair...");
 
     try {
       const subtle = window.crypto.subtle;
@@ -114,13 +118,29 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onAuthSuccess }) => {
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
 
-      addLog(`[Crypto] Generated Client Public Key Fingerprint: ${publicKeyHex.substring(0, 16)}...`);
+      // Generate or retrieve post-quantum keys (ML-DSA / ML-KEM)
+      let pqPublicKeyHex = localStorage.getItem('pq_kem_public_key');
+      if (!pqPublicKeyHex) {
+        const dsaKeys = ml_dsa87.keygen();
+        const kemKeys = ml_kem1024.keygen();
+        const dsaPubHex = Array.from(dsaKeys.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
+        const kemPubHex = Array.from(kemKeys.publicKey).map(b => b.toString(16).padStart(2, '0')).join('');
+        pqPublicKeyHex = `${dsaPubHex}:${kemPubHex}`;
+
+        const dsaPrivHex = Array.from(dsaKeys.secretKey).map(b => b.toString(16).padStart(2, '0')).join('');
+        const kemPrivHex = Array.from(kemKeys.secretKey).map(b => b.toString(16).padStart(2, '0')).join('');
+        localStorage.setItem('pq_kem_private_key', kemPrivHex);
+        localStorage.setItem('pq_kem_public_key', pqPublicKeyHex);
+        localStorage.setItem('pq_dsa_private_key', dsaPrivHex);
+      }
+
+      addLog(`[Crypto] Generated Client Public Key Fingerprint: ${pqPublicKeyHex.substring(0, 16)}...`);
       addLog("[API] Submitting identity verification payload to /api/v1/auth/verify-otp...");
 
       const response = await apiClient.post("auth/verify-otp", {
         phoneNumber,
         otpCode,
-        clientPublicKey: publicKeyHex,
+        clientPublicKey: pqPublicKeyHex,
       });
 
       if (response.data && response.data.success) {
