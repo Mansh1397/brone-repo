@@ -628,63 +628,55 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const cleanRepKey = reputation_key.split(':')[0];
 
     ipfs_hash = ipfs_hash || "";
-    let isSigValid = false;
+    if (!ipfs_hash) {
+      return res.status(400).json({ error: "Missing ipfs_hash target in vote request." });
+    }
 
-    // Retrieve pending posts to resolve target post and check signature
-    const postsResult = await pool.query("SELECT ipfs_hash FROM decentralized_posts WHERE status = 'PENDING'");
-    
+    let isSigValid = false;
     const mlDsaModuleObj = new Function("return import('@noble/post-quantum/ml-dsa.js')")();
     const { ml_dsa87 } = await mlDsaModuleObj;
 
-    // Loop through all pending posts to find matching post if it verifies
-    for (const post of postsResult.rows) {
-      if (signature_proof.length === 9792) {
-        try {
-          const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
-          const messageBytes = new TextEncoder().encode(msg);
-          const pubKeyBytes = new Uint8Array(Buffer.from(cleanRepKey, 'hex'));
-          const sigBytes = new Uint8Array(Buffer.from(signature_proof, 'hex'));
-          
-          if (ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes)) {
-            isSigValid = true;
-            ipfs_hash = post.ipfs_hash;
-            break;
-          }
-        } catch (err) {
-          // Skip
+    if (signature_proof.length === 9792) {
+      try {
+        const msg = `${ipfs_hash}|${nullifier}|${vote_status}`;
+        const messageBytes = new TextEncoder().encode(msg);
+        const pubKeyBytes = new Uint8Array(Buffer.from(cleanRepKey, 'hex'));
+        const sigBytes = new Uint8Array(Buffer.from(signature_proof, 'hex'));
+        
+        if (ml_dsa87.verify(sigBytes, messageBytes, pubKeyBytes)) {
+          isSigValid = true;
         }
-      } else {
-        try {
-          const msg = `${post.ipfs_hash}|${nullifier}|${vote_status}`;
-          const keyObject = crypto.createPublicKey({
-            key: Buffer.from(cleanRepKey, "hex"),
-            format: "der",
-            type: "spki"
-          });
-          const ok = crypto.verify(
-            "SHA256",
-            Buffer.from(msg),
-            {
-              key: keyObject,
-              dsaEncoding: "ieee-p1363"
-            },
-            Buffer.from(signature_proof, "hex")
-          );
-          if (ok) {
-            isSigValid = true;
-            ipfs_hash = post.ipfs_hash;
-            break;
-          }
-        } catch (err) {
-          // Skip
+      } catch (err) {
+        // Skip
+      }
+    } else {
+      try {
+        const msg = `${ipfs_hash}|${nullifier}|${vote_status}`;
+        const keyObject = crypto.createPublicKey({
+          key: Buffer.from(cleanRepKey, "hex"),
+          format: "der",
+          type: "spki"
+        });
+        const ok = crypto.verify(
+          "SHA256",
+          Buffer.from(msg),
+          {
+            key: keyObject,
+            dsaEncoding: "ieee-p1363"
+          },
+          Buffer.from(signature_proof, "hex")
+        );
+        if (ok) {
+          isSigValid = true;
         }
+      } catch (err) {
+        // Skip
       }
     }
 
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
     if (!isSigValid && bypassValidation) {
       isSigValid = true;
-      ipfs_hash = postsResult.rows[0]?.ipfs_hash || "QmPotholeReported";
     }
 
     if (!isSigValid) {
