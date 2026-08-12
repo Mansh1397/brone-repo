@@ -361,6 +361,10 @@ const encryptPayloadWithKey = async (text: string, aesKey: Uint8Array): Promise<
   combinedBytes.set(iv, 0);
   combinedBytes.set(ciphertextBytes, iv.length);
 
+  console.log("🔐 [ENCRYPT DEBUG] IV length:", iv.byteLength);
+  console.log("🔐 [ENCRYPT DEBUG] Ciphertext length:", ciphertextBytes.byteLength);
+  console.log("🔐 [ENCRYPT DEBUG] Total payload combined length:", combinedBytes.byteLength);
+
   let binary = "";
   const len = combinedBytes.byteLength;
   for (let i = 0; i < len; i++) {
@@ -559,7 +563,18 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
     currentStep = "Parsing Network Hex";
     const kemBytes = hexToBytes(task.kem_ciphertext);
     const wrappedBytes = hexToBytes(task.wrapped_key);
-    const payloadBytes = hexToBytes(task.encrypted_payload);
+    
+    let payloadBytes: Uint8Array;
+    if (typeof task.encrypted_payload === 'string' && task.encrypted_payload.startsWith("ENC_GCM:")) {
+      const clean = task.encrypted_payload.replace(/^(ENC_GCM:|0x)/, '').trim();
+      const binaryString = window.atob(clean);
+      payloadBytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        payloadBytes[i] = binaryString.charCodeAt(i);
+      }
+    } else {
+      payloadBytes = hexToBytes(task.encrypted_payload);
+    }
 
     currentStep = `ML-KEM Decapsulate (PrivKey Len: ${privKeyBytes.length})`;
     if (privKeyBytes.length !== 1184 && privKeyBytes.length !== 2400 && privKeyBytes.length !== 3168) {
@@ -584,8 +599,12 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
     }
 
     currentStep = `Decrypt Payload (Payload Len: ${payloadBytes.length})`;
+    console.log("🔓 [DECRYPT DEBUG] Raw incoming payload type and length:", typeof task.encrypted_payload, task.encrypted_payload?.byteLength || task.encrypted_payload?.length);
     const iv = payloadBytes.slice(0, 12);
     const cipher = payloadBytes.slice(12);
+    console.log("🔓 [DECRYPT DEBUG] Sliced IV length:", iv.byteLength);
+    console.log("🔓 [DECRYPT DEBUG] Sliced Ciphertext/Tag length:", cipher.byteLength);
+
     const decryptedBuffer = await subtle.decrypt({ name: "AES-GCM", iv }, aesKey, cipher);
 
     currentStep = "Text Decoding";
