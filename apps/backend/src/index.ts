@@ -707,12 +707,9 @@ const handleVoteArbitration = async (req: any, res: any) => {
       values: [ipfs_hash, vote_decision]
     });
 
-    // 6. Execute 60/50 Quorum threshold evaluation
-    const activeUsersRes = await pool.query("SELECT COUNT(*) as count FROM anonymous_public_keys");
-    const total_active_users_in_geo = parseInt(activeUsersRes.rows[0]?.count || "0", 10);
-    const pool_size = Math.max(2, Math.ceil(total_active_users_in_geo * 0.60)); 
-    const required_approvals = Math.ceil(pool_size * 0.50);
-    const max_rejections = pool_size - required_approvals;
+    // 6. Execute Quorum threshold evaluation based on assigned jury panel size
+    const totalJurorsRes = await pool.query("SELECT COUNT(*) as count FROM post_encapsulations WHERE ipfs_hash = $1", [ipfs_hash]);
+    const totalJurors = parseInt(totalJurorsRes.rows[0]?.count || "0", 10);
 
     const approvalsRes = await pool.query("SELECT COUNT(*) as count FROM anonymous_votes WHERE ipfs_hash = $1 AND vote_decision = 'UPHOLD'", [ipfs_hash]);
     const rejectionsRes = await pool.query("SELECT COUNT(*) as count FROM anonymous_votes WHERE ipfs_hash = $1 AND vote_decision = 'DISMISS'", [ipfs_hash]);
@@ -720,15 +717,20 @@ const handleVoteArbitration = async (req: any, res: any) => {
     const rejections = parseInt(rejectionsRes.rows[0]?.count || "0", 10);
 
     let verdict = "UNDECIDED";
-    if (approvals >= required_approvals) {
-      verdict = "APPROVED";
-      await pool.query("UPDATE decentralized_posts SET status = 'APPROVED' WHERE ipfs_hash = $1", [ipfs_hash]);
-    } else if (rejections > max_rejections) {
-      verdict = "REJECTED";
-      await pool.query("UPDATE decentralized_posts SET status = 'REJECTED' WHERE ipfs_hash = $1", [ipfs_hash]);
+    if (totalJurors > 0) {
+      const approvalRatio = approvals / totalJurors;
+      const rejectionRatio = rejections / totalJurors;
+      
+      if (approvalRatio >= 0.5) {
+        verdict = "APPROVED";
+        await pool.query("UPDATE decentralized_posts SET status = 'APPROVED' WHERE ipfs_hash = $1 AND status != 'APPROVED'", [ipfs_hash]);
+      } else if (rejectionRatio > 0.5) {
+        verdict = "REJECTED";
+        await pool.query("UPDATE decentralized_posts SET status = 'REJECTED' WHERE ipfs_hash = $1 AND status != 'REJECTED'", [ipfs_hash]);
+      }
     }
 
-    console.log(`[QUORUM EVALUATION] IPFS Hash: ${ipfs_hash}, Approvals: ${approvals}/${required_approvals}, Rejections: ${rejections}/${max_rejections}, Verdict: ${verdict}`);
+    console.log(`[QUORUM EVALUATION] IPFS Hash: ${ipfs_hash}, Approvals: ${approvals}/${totalJurors}, Rejections: ${rejections}/${totalJurors}, Verdict: ${verdict}`);
 
     return res.status(200).json({
       success: true,

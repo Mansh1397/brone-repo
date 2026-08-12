@@ -628,6 +628,15 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
     let active = true;
     const fetchAndDecrypt = async () => {
       try {
+        const myKeys = await getOrCreateKeyPair();
+        const myDsaPart = myKeys.publicKeyHex.split(':')[0];
+        const myPubKeyRaw = myKeys.publicKeyHex.split(':')[1] || myKeys.publicKeyHex;
+        const myPrivKeyRaw = myKeys.kemPrivateKey || myKeys.privateKey;
+        
+        const pubKeyFingerprint = getStrictChecksum(myPubKeyRaw);
+        const privKeyFingerprint = getStrictChecksum(myPrivKeyRaw);
+        const lockedState = `🔒 Locked | My PrivFP: ${privKeyFingerprint} | My PubFP: ${pubKeyFingerprint}`;
+
         if (task) {
           console.warn("[DECRYPTION ATTEMPT DATA]:", {
             hasKemCiphertext: !!task.kem_ciphertext,
@@ -639,30 +648,14 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           });
           const payload = task.encrypted_payload;
           if (payload && payload.startsWith("ENC_GCM:")) {
-            const myKeys = await getOrCreateKeyPair();
-            const rawStorageVal = localStorage.getItem('kem_private_key') || 
-                                  localStorage.getItem('pqKemPrivateKeyHex') || 
-                                  (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
-            
-            const decrypted = await forceJurorDecryption(task, rawStorageVal, ml_kem1024);
-            if (typeof decrypted === 'string' && decrypted.startsWith('Decryption Error:')) {
-              const errorMsg = decrypted.replace('Decryption Error:', '').trim();
-              if (active) {
-                setText(
-                  <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
-                    <h4>🚨 DECRYPTION CRASH 🚨</h4>
-                    <p><strong>Failed at Step:</strong> Sandbox</p>
-                    <p><strong>Diagnostics:</strong> N/A</p>
-                    <p><strong>Error:</strong> {errorMsg}</p>
-                  </div>
-                );
-              }
+            const decrypted = await forceJurorDecryption(task, myPrivKeyRaw, ml_kem1024);
+            if (typeof decrypted === 'string' && (decrypted.startsWith('Decryption Error:') || decrypted.startsWith('Failed at Step:') || decrypted.startsWith('🔒 Locked'))) {
+              if (active) setText(lockedState);
             } else {
               if (active) setText(decrypted);
             }
           } else {
-            console.warn("[RENDER CHECK] Payload starts with ENC_GCM?:", task.encrypted_payload?.startsWith("ENC_GCM:"), "Actual payload string:", task.encrypted_payload?.substring(0, 30));
-            if (active) setText(payload || fallbackText || `[DECRYPTION FAILED]: Payload missing or fails GCM check.`);
+            if (active) setText(payload || fallbackText || lockedState);
           }
           return;
         }
@@ -670,50 +663,47 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
         const response = await apiClient.get(`posts/extract?ipfs_hash=${ipfsHash}`);
         const payload = response.data.encrypted_payload;
         if (payload && payload.startsWith("ENC_GCM:")) {
-          const myKeys = await getOrCreateKeyPair();
-          const rawStorageVal = localStorage.getItem('kem_private_key') || 
-                                localStorage.getItem('pqKemPrivateKeyHex') || 
-                                (myKeys ? (myKeys.kemPrivateKey || myKeys.privateKey) : null);
           const ringSig = response.data.ring_signature || {};
-          const match = ringSig.encapsulation || (ringSig.encapsulations && ringSig.encapsulations[0]) || {};
+          const encapsulations = ringSig.encapsulations || [];
           
+          // Find encapsulation matching active user
+          const match = encapsulations.find((enc: any) => {
+            const encJurorId = enc.juror_id || "";
+            return encJurorId === myDsaPart || encJurorId === myKeys.publicKeyHex;
+          });
+
+          if (!match) {
+            if (active) setText(lockedState);
+            if (active) setLoading(false);
+            return;
+          }
+
           const decTask = {
             kem_ciphertext: match.kem_ciphertext || response.data.kem_ciphertext,
             wrapped_key: match.wrapped_key || response.data.wrapped_key,
             encrypted_payload: payload
           };
 
-          const decrypted = await forceJurorDecryption(decTask, rawStorageVal, ml_kem1024);
-          if (typeof decrypted === 'string' && decrypted.startsWith('Decryption Error:')) {
-            const errorMsg = decrypted.replace('Decryption Error:', '').trim();
-            if (active) {
-              setText(
-                <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
-                  <h4>🚨 DECRYPTION CRASH 🚨</h4>
-                  <p><strong>Failed at Step:</strong> Sandbox</p>
-                  <p><strong>Diagnostics:</strong> N/A</p>
-                  <p><strong>Error:</strong> {errorMsg}</p>
-                </div>
-              );
-            }
+          const decrypted = await forceJurorDecryption(decTask, myPrivKeyRaw, ml_kem1024);
+          if (typeof decrypted === 'string' && (decrypted.startsWith('Decryption Error:') || decrypted.startsWith('Failed at Step:') || decrypted.startsWith('🔒 Locked'))) {
+            if (active) setText(lockedState);
           } else {
             if (active) setText(decrypted);
           }
         } else {
-          if (active) setText(payload || fallbackText || `[DECRYPTION FAILED]: Payload missing or fails GCM check.`);
+          if (active) setText(payload || fallbackText || lockedState);
         }
       } catch (err: any) {
         console.warn("[DECRYPTION CRASH DETAIL]:", err);
-        const errorMsg = err instanceof Error ? `${err.name}: ${err.message} \nStack: ${err.stack}` : String(err);
-        if (active) {
-          setText(
-            <div style={{ border: '2px solid red', padding: '10px', marginTop: '10px', color: 'red', wordBreak: 'break-all', fontSize: '12px' }}>
-              <h4>🚨 DECRYPTION CRASH 🚨</h4>
-              <p><strong>Failed at Step:</strong> Outer Fetch/Keypair Resolution</p>
-              <p><strong>Diagnostics:</strong> Task: {String(!!task)}</p>
-              <pre style={{ fontSize: '10px', whiteSpace: 'pre-wrap', color: 'red', marginTop: '5px' }}>{errorMsg}</pre>
-            </div>
-          );
+        try {
+          const myKeys = await getOrCreateKeyPair();
+          const myPubKeyRaw = myKeys.publicKeyHex.split(':')[1] || myKeys.publicKeyHex;
+          const myPrivKeyRaw = myKeys.kemPrivateKey || myKeys.privateKey;
+          const pubKeyFingerprint = getStrictChecksum(myPubKeyRaw);
+          const privKeyFingerprint = getStrictChecksum(myPrivKeyRaw);
+          if (active) setText(`🔒 Locked | My PrivFP: ${privKeyFingerprint} | My PubFP: ${pubKeyFingerprint}`);
+        } catch (e) {
+          if (active) setText(`🔒 Locked`);
         }
       } finally {
         if (active) setLoading(false);
@@ -727,13 +717,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
 
   if (task && (!task.encrypted_payload || !task.encrypted_payload.startsWith("ENC_GCM:"))) {
     return (
-      <div style={{ border: '2px solid red', padding: '10px', color: 'red' }}>
-        <h4>🚨 PAYLOAD MISSING DEBUG 🚨</h4>
-        <p>Expected encrypted_payload, but received:</p>
-        <pre style={{ fontSize: '10px', overflowX: 'auto' }}>
-          {JSON.stringify(task, null, 2)}
-        </pre>
-      </div>
+      <span className="text-gray-500 font-mono text-xs">🔒 Locked</span>
     );
   }
 
