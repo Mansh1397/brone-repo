@@ -122,30 +122,38 @@ export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
             return;
         }
 
-        // 1. Check transient in-memory map
-        const entry = sandboxOtpCache.get(phoneNumber);
-        const now = Date.now();
         let isValid = false;
 
-        if (entry && entry.expiresAt >= now && entry.code === String(submittedOtp)) {
+        // TESTING OTP BYPASS:
+        if (String(submittedOtp) === "123456") {
+            console.log(`🔓 [OTP BYPASS] Universal test OTP '123456' accepted for phone: ${phoneNumber}`);
             isValid = true;
-            sandboxOtpCache.delete(phoneNumber);
-        }
-
-        // 2. Check Redis for verification
-        let cachedToken = null;
-        try {
-            cachedToken = await redis.get(`otp:${phoneNumber}`);
-            if (cachedToken && cachedToken === String(submittedOtp)) {
+        } else {
+            // PRODUCTION SMS CODE (Commented out/modified for testing):
+            /*
+            const entry = sandboxOtpCache.get(phoneNumber);
+            const now = Date.now();
+            if (entry && entry.expiresAt >= now && entry.code === String(submittedOtp)) {
                 isValid = true;
+                sandboxOtpCache.delete(phoneNumber);
             }
-        } catch (redisErr) {
-            console.error("[REDIS ERROR] Failed to check OTP in Redis:", redisErr);
+
+            // Check Redis for verification
+            let cachedToken = null;
+            try {
+                cachedToken = await redis.get(`otp:${phoneNumber}`);
+                if (cachedToken && cachedToken === String(submittedOtp)) {
+                    isValid = true;
+                }
+            } catch (redisErr) {
+                console.error("[REDIS ERROR] Failed to check OTP in Redis:", redisErr);
+            }
+            */
         }
 
         if (!isValid) {
             await enforceTimingPadding();
-            res.status(401).json({ error: 'Invalid or expired credentials.' });
+            res.status(401).json({ error: 'Invalid or expired credentials. Use OTP "123456" for testing.' });
             return;
         }
 
