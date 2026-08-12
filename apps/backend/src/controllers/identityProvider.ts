@@ -12,7 +12,7 @@ interface OtpEntry {
     code: string;
     expiresAt: number;
 }
-const sandboxOtpCache = new Map<string, OtpEntry>();
+export const sandboxOtpCache = new Map<string, OtpEntry>();
 
 const SERVER_PEPPER = process.env.SERVER_PEPPER || 'BRONE_CORE_SECURE_PEPPER_STRING_MUST_BE_LONG';
 const SMS_GATEWAY_URL = 'https://api.gatewayapi.com/rest/mtsms';

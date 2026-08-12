@@ -8,7 +8,7 @@ import { handleBlindStamp, getPublicKeyConfig } from "./controllers/stampControl
 import { handleMetricIncrement } from "./controllers/ledgerController";
 import { initializeApplicationServer, configureServerTimeouts } from "./utils/bootstrap";
 import { pool } from './controllers/ringValidator';
-import { powValidator, requestOtp, verifyOtp } from "./controllers/identityProvider";
+import { powValidator, requestOtp, verifyOtp, sandboxOtpCache } from "./controllers/identityProvider";
 import { initDB } from "./utils/dbInit";
 
 const app = express();
@@ -564,6 +564,7 @@ const handlePostArbitration = async (req: any, res: any) => {
           )
         `).catch(() => {});
 
+        console.log(`📦 [JURY DISTRIBUTION] Post created ID: ${ipfs_hash} | Assigned to Juror IDs:`, encapArray.map((enc: any) => enc.juror_id || enc.pubkey || enc.target_pubkey));
         console.log(`🔍 [JURY TASK CREATION] Inserting ${encapArray.length} encapsulations for IPFS Hash: ${ipfs_hash}`);
         for (const encap of encapArray) {
           const jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey || "";
@@ -923,6 +924,32 @@ if (process.env.NODE_ENV !== "test") {
       } else {
         console.log('[LIVE MODE] Stale post auto-purge is disabled for production environments.');
       }
+      // 📊 [SCHEMA & JUROR DIAGNOSTICS] complete juror userbase & schema inspection
+      try {
+        const schemaRes = await pool.query(`
+          SELECT table_name, column_name, data_type 
+          FROM information_schema.columns 
+          WHERE table_schema = 'public'
+          ORDER BY table_name, column_name;
+        `);
+        console.log("📊 [SCHEMA & JUROR DIAGNOSTICS] Postgres public table columns:");
+        console.log(JSON.stringify(schemaRes.rows, null, 2));
+
+        const keysRes = await pool.query("SELECT key_hash, public_key_hex, created_at FROM anonymous_public_keys;");
+        console.log(`📊 [SCHEMA & JUROR DIAGNOSTICS] Total registered users/jurors: ${keysRes.rows.length}`);
+        console.log(`📊 [SCHEMA & JUROR DIAGNOSTICS] Juror details:`, JSON.stringify(keysRes.rows, null, 2));
+
+        // Log memory cached sandboxed OTP entries (which contain phone numbers and OTP codes!)
+        const sandboxEntries = Array.from(sandboxOtpCache.entries()).map(([phone, data]) => ({
+          phoneNumber: phone,
+          otpCode: data.code,
+          expiresAt: new Date(data.expiresAt).toISOString()
+        }));
+        console.log(`📊 [SCHEMA & JUROR DIAGNOSTICS] Transient memory-cached phone numbers/OTPs:`, JSON.stringify(sandboxEntries, null, 2));
+      } catch (diagErr) {
+        console.warn("📊 [SCHEMA & JUROR DIAGNOSTICS ERROR]:", diagErr);
+      }
+
     } catch (dbErr: any) {
       console.error("[BOOTSTRAP] Fatal database initialization failure:", dbErr.message || dbErr);
       process.exit(1);
