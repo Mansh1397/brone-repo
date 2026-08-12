@@ -12,6 +12,7 @@ import { MetricSyncEngine } from "../../../infrastructure/MetricSyncEngine";
 import { getOrCreateStorageKey, loadAndDecryptState, encryptAndSaveState, decryptStoragePayload, decryptJurorKey } from "../../../utils/storage";
 import { uploadToIPFS } from "../../../utils/ipfsService";
 import { generateRingSignature, fetchDecoyRing, getPrivateKeyHex } from "../../../utils/ringSigner";
+import { schedulePublicKeyRegistration } from "../../../utils/cryptoSync";
 import crypto from "crypto";
 import pako from "pako";
 // @ts-ignore
@@ -815,6 +816,8 @@ const getOrCreateKeyPair = async (): Promise<{
     console.log("[ZK IDENTITY] Skipping key generation, loading from storage.");
     const dsaPrivateKey = hexToBytes(existingDsaPriv);
     const kemPrivateKey = hexToBytes(existingPriv);
+    // Register public key anonymously to the backend
+    schedulePublicKeyRegistration(existingPub);
     const keypairObj = {
       privateKey: dsaPrivateKey,
       dsaPrivateKey,
@@ -840,6 +843,8 @@ const getOrCreateKeyPair = async (): Promise<{
       localStorage.setItem('pq_kem_private_key', stored.pqKemPrivateKeyHex);
       localStorage.setItem('pq_kem_public_key', stored.pqPublicKeyHex);
       localStorage.setItem('pq_dsa_private_key', stored.pqDsaPrivateKeyHex);
+      // Register public key anonymously to the backend
+      schedulePublicKeyRegistration(stored.pqPublicKeyHex);
 
       const keypairObj = {
         privateKey: dsaPrivateKey,
@@ -873,6 +878,8 @@ const getOrCreateKeyPair = async (): Promise<{
   localStorage.setItem('pq_kem_private_key', kemPrivHex);
   localStorage.setItem('pq_kem_public_key', publicKeyHex);
   localStorage.setItem('pq_dsa_private_key', dsaPrivHex);
+  // Register public key anonymously to the backend
+  schedulePublicKeyRegistration(publicKeyHex);
 
   if (stored) {
     stored.pqDsaPrivateKeyHex = dsaPrivHex;

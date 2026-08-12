@@ -144,7 +144,7 @@ app.post("/submit", (req: Request, res: Response) => {
 
       const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const activeJurorsInChannel = Array.from(channelJurorRegistry.values()).filter(
-        (juror) => juror.lastActiveAt >= sevenDaysAgo
+        (juror) => !juror.lastActiveAt || juror.lastActiveAt >= sevenDaysAgo
       );
 
       // 40% Target Pool Calculation
