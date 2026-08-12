@@ -1334,22 +1334,34 @@ export const ReportingHub: React.FC = () => {
       const messageToSign = `${contentCID}|${geohashVal}`;
       const ringSig = generateRingSignature(messageToSign, privKeyHex, ringDsaKeys) as any;
 
-      // 5. Encapsulate the AES key against each juror's ML-KEM public key
-      let targetKeys = decoyRing.filter(key => {
+      // Filter decoy ring to find eligible jurors
+      let eligibleJurorKeys = decoyRing.filter(key => {
         const dsaPart = key.split(':')[0];
         const myDsaPart = publicKeyHex.split(':')[0];
-        return dsaPart !== myDsaPart && key.includes(':');
+        return dsaPart !== myDsaPart;
       });
 
-      // Cap jury panel size dynamically to available active users (60% of eligible users, at least 1)
-      const targetPanelSize = Math.max(1, Math.min(targetKeys.length, Math.ceil(targetKeys.length * 0.6)));
-      
-      // Shuffle targetKeys and slice to targetPanelSize
-      targetKeys = targetKeys.sort(() => 0.5 - Math.random()).slice(0, targetPanelSize);
+      // Split into real registered keys (contain ':') and decoy keys (no ':')
+      const realKeys = eligibleJurorKeys.filter(k => k.includes(':'));
+      const decoyKeys = eligibleJurorKeys.filter(k => !k.includes(':'));
+
+      // Prioritize real keys
+      let finalTargetKeys = [...realKeys];
+      const targetPanelSize = Math.max(1, Math.min(eligibleJurorKeys.length, Math.ceil(eligibleJurorKeys.length * 0.6)));
+
+      if (finalTargetKeys.length < targetPanelSize) {
+        const remainingNeeded = targetPanelSize - finalTargetKeys.length;
+        const shuffledDecoys = decoyKeys.sort(() => 0.5 - Math.random());
+        finalTargetKeys = [...finalTargetKeys, ...shuffledDecoys.slice(0, remainingNeeded)];
+      } else {
+        finalTargetKeys = finalTargetKeys.sort(() => 0.5 - Math.random()).slice(0, targetPanelSize);
+      }
+
+      let targetKeys = finalTargetKeys;
 
       console.warn("🔍 [JURY DIAGNOSTICS] decoyRing fetched:", decoyRing);
       console.warn("🔍 [JURY DIAGNOSTICS] publicKeyHex (Author):", publicKeyHex);
-      console.warn("🔍 [JURY DIAGNOSTICS] targetKeys after filtering/shuffling:", targetKeys);
+      console.warn("🔍 [JURY DIAGNOSTICS] targetKeys after prioritizing/shuffling:", targetKeys);
 
       if (targetKeys.length === 0) {
         alert("Cannot secure post: No active users found in your area to act as jurors.");
