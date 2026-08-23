@@ -1343,20 +1343,30 @@ export const ReportingHub: React.FC = () => {
         return dsaPart !== myDsaPart;
       });
 
+      // True random Fisher-Yates shuffle helper
+      const shuffleArray = (arr: any[]) => {
+        const shuffled = [...arr];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+      };
+
       // Split into real registered keys (contain ':') and decoy keys (no ':')
       const realKeys = eligibleJurorKeys.filter(k => k.includes(':'));
       const decoyKeys = eligibleJurorKeys.filter(k => !k.includes(':'));
 
       // Prioritize real keys
-      let finalTargetKeys = [...realKeys];
+      let finalTargetKeys = shuffleArray(realKeys);
       const targetPanelSize = Math.max(1, Math.min(eligibleJurorKeys.length, Math.ceil(eligibleJurorKeys.length * 0.6)));
 
       if (finalTargetKeys.length < targetPanelSize) {
         const remainingNeeded = targetPanelSize - finalTargetKeys.length;
-        const shuffledDecoys = decoyKeys.sort(() => 0.5 - Math.random());
+        const shuffledDecoys = shuffleArray(decoyKeys);
         finalTargetKeys = [...finalTargetKeys, ...shuffledDecoys.slice(0, remainingNeeded)];
       } else {
-        finalTargetKeys = finalTargetKeys.sort(() => 0.5 - Math.random()).slice(0, targetPanelSize);
+        finalTargetKeys = finalTargetKeys.slice(0, targetPanelSize);
       }
 
       let targetKeys = finalTargetKeys;
@@ -1422,9 +1432,9 @@ export const ReportingHub: React.FC = () => {
           console.log(`[AUTHOR NETWORK] Encrypting for Juror ${jurorId} | PubKey FP: ${checksum} | Bytes: ${jurorPubKeyBytes.length}`);
           
           if (jurorPubKeyBytes.length < 1000) {
-              alert(`DATABASE CORRUPTION: Juror ${jurorId}'s Public Key is only ${jurorPubKeyBytes.length} bytes! The DB column is truncating it.`);
+              console.warn(`DATABASE CORRUPTION: Juror ${jurorId}'s Public Key is only ${jurorPubKeyBytes.length} bytes! The DB column is truncating it.`);
           } else {
-              alert(`[CHECKSUM: ${checksum}] Target Juror ID: ${jurorId}`);
+              console.log(`[CHECKSUM: ${checksum}] Target Juror ID: ${jurorId}`);
           }
 
           // 4. Encapsulate specifically for THIS juror
