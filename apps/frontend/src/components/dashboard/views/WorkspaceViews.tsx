@@ -639,6 +639,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
         const myDsaPart = myKeys.publicKeyHex.split(':')[0];
         const myPubKeyRaw = myKeys.publicKeyHex.split(':')[1] || myKeys.publicKeyHex;
         const myPrivKeyRaw = myKeys.kemPrivateKey || myKeys.privateKey;
+        const myKeyHash = await sha256(myKeys.publicKeyHex);
         
         const pubKeyFingerprint = getStrictChecksum(myPubKeyRaw);
         const privKeyFingerprint = getStrictChecksum(myPrivKeyRaw);
@@ -676,7 +677,7 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
           // Find encapsulation matching active user
           const match = encapsulations.find((enc: any) => {
             const encJurorId = enc.juror_id || "";
-            return encJurorId === myDsaPart || encJurorId === myKeys.publicKeyHex;
+            return encJurorId === myDsaPart || encJurorId === myKeys.publicKeyHex || encJurorId === myKeyHash;
           });
 
           if (!match) {
