@@ -868,17 +868,25 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
 
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
-    const authorFilter = bypassValidation ? "" : "AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)";
+
+    let queryText = `
+      SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
+      FROM decentralized_posts dp
+      INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND LOWER(pe.juror_pubkey) = LOWER($2)
+      WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING'
+    `;
+    const params: any[] = [geohashFilter, jurorIdHash];
+
+    if (!bypassValidation) {
+      params.push(req.user?.id || "");
+      queryText += ` AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $3)`;
+    }
+
+    queryText += ` ORDER BY dp.submitted_at DESC LIMIT 10`;
 
     let result: any;
     try {
-      result = await pool.query(`
-        SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
-        FROM decentralized_posts dp
-        INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND LOWER(pe.juror_pubkey) = LOWER($3)
-        WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' ${authorFilter}
-        ORDER BY dp.submitted_at DESC LIMIT 10
-      `, [geohashFilter, req.user?.id || "", jurorIdHash]);
+      result = await pool.query(queryText, params);
     } catch (getDbError) {
       console.warn("🚨 [DB SELECT ERROR] 🚨:", getDbError);
       throw getDbError;
