@@ -363,7 +363,20 @@ const handleGetPublicKeys = async (req: any, res: any) => {
       keyPrefix: row.public_key_hex?.substring(0, 16)
     })));
 
-    const result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY created_at DESC LIMIT 11;");
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    // 1. Try fetching users created/active in the last 7 days
+    let result = await pool.query(
+      "SELECT public_key_hex FROM anonymous_public_keys WHERE created_at >= $1 ORDER BY created_at DESC LIMIT 11;",
+      [sevenDaysAgo]
+    );
+
+    // 2. Fallback for local testing if strict geo/timestamp returns 0 users
+    if (result.rows.length === 0) {
+      console.log("⚠️ [JURY POOL] Strict 7-day filter returned 0 users. Falling back to all registered test users.");
+      result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY created_at DESC LIMIT 11;");
+    }
+
     const keys = result.rows.map((row: any) => row.public_key_hex);
     console.log("🔍 [JURY DIAGNOSTICS] Returning keys count:", keys.length);
     return res.status(200).json(keys);

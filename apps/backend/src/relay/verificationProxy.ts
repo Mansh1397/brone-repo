@@ -143,9 +143,14 @@ app.post("/submit", (req: Request, res: Response) => {
       streamedData = "";
 
       const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const activeJurorsInChannel = Array.from(channelJurorRegistry.values()).filter(
+      let activeJurorsInChannel = Array.from(channelJurorRegistry.values()).filter(
         (juror) => !juror.lastActiveAt || juror.lastActiveAt >= sevenDaysAgo
       );
+
+      if (activeJurorsInChannel.length === 0) {
+        console.log("⚠️ [JURY POOL] Strict 7-day filter returned 0 users. Falling back to all registered test users.");
+        activeJurorsInChannel = Array.from(channelJurorRegistry.values());
+      }
 
       // 40% Target Pool Calculation
       const targetPoolCount = Math.max(1, Math.round(activeJurorsInChannel.length * 0.40));
