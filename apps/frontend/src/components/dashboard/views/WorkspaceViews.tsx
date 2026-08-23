@@ -635,6 +635,16 @@ const PostDescription: React.FC<{ ipfsHash: string; fallbackText?: string; task?
     let active = true;
     const fetchAndDecrypt = async () => {
       try {
+        // Check local Author cache first to decrypt Author's own posts instantly
+        const cachedPlaintext = localStorage.getItem(`brone_author_post_${ipfsHash}`);
+        if (cachedPlaintext) {
+          if (active) {
+            setText(cachedPlaintext);
+            setLoading(false);
+          }
+          return;
+        }
+
         const myKeys = await getOrCreateKeyPair();
         const myDsaPart = myKeys.publicKeyHex.split(':')[0];
         const myPubKeyRaw = myKeys.publicKeyHex.split(':')[1] || myKeys.publicKeyHex;
@@ -1465,6 +1475,15 @@ export const ReportingHub: React.FC = () => {
 
       // Add the encapsulations directly to the ring signature payload
       ringSig.encapsulations = encapsulations;
+
+      // Cache author post plaintext locally for home feed rendering
+      if (contentCID) {
+        try {
+          localStorage.setItem(`brone_author_post_${contentCID}`, reportText);
+        } catch (e) {
+          console.warn("Failed to cache author plaintext:", e);
+        }
+      }
 
       // 6. Introduce network opacity jitter delay (500ms - 2500ms) to defeat packet analysis
       const jitterDelay = Math.floor(Math.random() * 2000) + 500;
