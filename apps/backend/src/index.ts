@@ -1035,15 +1035,93 @@ v1Router.post("/jury/arbitration/vote", requireAuth, handleVoteArbitration);
 v1Router.get("/posts/extract", requireAuth, handleIPFSExtraction);
 v1Router.post("/posts/extract", requireAuth, handleIPFSExtraction);
 
-v1Router.get("/reputation/:key", requireAuth, (req: any, res: any) => {
-  res.status(200).json({
-    reputation_key: req.params.key,
-    total_posts: 45,
-    total_verifications: 18,
-    rewards_balance: 1250,
-    verification_accuracy_rate: "92%"
-  });
-});
+const handleGetUserStats = async (req: any, res: any) => {
+  try {
+    const reputation_key = req.params.key || (req.query.juror_pubkey as string) || req.user?.id || req.query.key_hash || "";
+    let jurorIdHash = "";
+    if (reputation_key.length === 64 && !reputation_key.includes(':')) {
+      jurorIdHash = reputation_key;
+    } else if (reputation_key.includes(':')) {
+      jurorIdHash = crypto.createHash("sha256").update(reputation_key).digest("hex");
+    } else {
+      const keyCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1", [`${reputation_key}:%`]);
+      if (keyCheck.rows.length > 0) {
+        jurorIdHash = keyCheck.rows[0].key_hash;
+      } else {
+        jurorIdHash = crypto.createHash("sha256").update(reputation_key).digest("hex");
+      }
+    }
+
+    const cleanRepKey = reputation_key.split(':')[0];
+
+    let totalRewards = 0;
+    let decidedDutiesCount = 0;
+    let correctVotesCount = 0;
+    let totalJuryCompleted = 0;
+
+    // 1. Calculate stats from transientVoteTracker
+    for (const [postId, votesArray] of transientVoteTracker.entries()) {
+      try {
+        const postRes = await pool.query("SELECT status, submitted_at FROM decentralized_posts WHERE ipfs_hash = $1", [postId]);
+        if (postRes.rows.length === 0) continue;
+        const postStatus = postRes.rows[0].status;
+
+        const jurorVote = votesArray.find(v => v.jurorId === jurorIdHash || v.jurorId === cleanRepKey);
+        if (jurorVote) {
+          totalJuryCompleted++;
+          if (postStatus === 'APPROVED' || postStatus === 'REJECTED') {
+            decidedDutiesCount++;
+            const consensusVerdict = postStatus === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+            if (jurorVote.verdict === consensusVerdict) {
+              correctVotesCount++;
+              
+              const correctVotes = votesArray.filter(v => v.verdict === consensusVerdict);
+              correctVotes.sort((a, b) => a.votedAt - b.votedAt);
+              const jurorIndex = correctVotes.findIndex(v => v.jurorId === jurorIdHash || v.jurorId === cleanRepKey);
+              
+              if (jurorIndex !== -1) {
+                const speedTierMultiplier = Math.max(0.5, 1.0 - (jurorIndex * 0.15));
+                totalRewards += 100 * speedTierMultiplier;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Skip individual trace errors
+      }
+    }
+
+    // 2. Count published posts by this author
+    let totalPublishedPosts = 0;
+    try {
+      const publishedRes = await pool.query(
+        "SELECT COUNT(*) as count FROM decentralized_posts WHERE (author_pubkey = $1 OR author_pubkey = $2 OR author_pubkey = $3) AND status = 'APPROVED'",
+        [reputation_key, cleanRepKey, jurorIdHash]
+      );
+      totalPublishedPosts = parseInt(publishedRes.rows[0]?.count || "0", 10);
+    } catch (err) {
+      // Skip
+    }
+
+    const verifiedPercentage = decidedDutiesCount > 0 
+      ? Math.round((correctVotesCount / decidedDutiesCount) * 100) 
+      : 100;
+
+    return res.status(200).json({
+      reputation_key: reputation_key,
+      total_posts: totalPublishedPosts,
+      total_verifications: totalJuryCompleted,
+      rewards_balance: totalRewards,
+      verification_accuracy_rate: `${verifiedPercentage}%`
+    });
+  } catch (error) {
+    console.error("[REPUTATION STATS ERROR]:", error);
+    return res.status(500).json({ error: "Internal processing error calculating user stats." });
+  }
+};
+
+v1Router.get("/reputation/:key", requireAuth, handleGetUserStats);
+v1Router.get("/user/stats", requireAuth, handleGetUserStats);
 
 app.use("/api/v1", v1Router);
 app.use("/", v1Router);
