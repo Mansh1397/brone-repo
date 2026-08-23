@@ -1357,16 +1357,14 @@ export const ReportingHub: React.FC = () => {
       const realKeys = eligibleJurorKeys.filter(k => k.includes(':'));
       const decoyKeys = eligibleJurorKeys.filter(k => !k.includes(':'));
 
-      // Prioritize real keys
+      // Prioritize real keys exclusively
       let finalTargetKeys = shuffleArray(realKeys);
-      const targetPanelSize = Math.max(1, Math.min(eligibleJurorKeys.length, Math.ceil(eligibleJurorKeys.length * 0.6)));
 
-      if (finalTargetKeys.length < targetPanelSize) {
-        const remainingNeeded = targetPanelSize - finalTargetKeys.length;
+      // If we have no real keys at all, fall back to decoy keys to prevent empty selection
+      if (finalTargetKeys.length === 0) {
+        const targetPanelSize = Math.max(1, Math.min(eligibleJurorKeys.length, Math.ceil(eligibleJurorKeys.length * 0.6)));
         const shuffledDecoys = shuffleArray(decoyKeys);
-        finalTargetKeys = [...finalTargetKeys, ...shuffledDecoys.slice(0, remainingNeeded)];
-      } else {
-        finalTargetKeys = finalTargetKeys.slice(0, targetPanelSize);
+        finalTargetKeys = shuffledDecoys.slice(0, targetPanelSize);
       }
 
       let targetKeys = finalTargetKeys;
