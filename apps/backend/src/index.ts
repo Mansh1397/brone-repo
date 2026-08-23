@@ -548,9 +548,43 @@ const handlePostArbitration = async (req: any, res: any) => {
       values: [signatureHash]
     });
 
-    // 6. Insert post into decentralized_posts
+    // 6. Ensure Author and Jurors exist in the database
+    const authorPubkey = req.user?.id || req.body?.authorId || "";
+    let authorKeyHash = "";
+    if (authorPubkey) {
+      if (authorPubkey.length === 64 && !authorPubkey.includes(':')) {
+        authorKeyHash = authorPubkey;
+      } else {
+        authorKeyHash = crypto.createHash("sha256").update(authorPubkey).digest("hex");
+      }
+      const authorCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash = $1", [authorKeyHash]);
+      if (authorCheck.rows.length === 0) {
+        console.log(`[AUTO-REGISTER] Author ${authorPubkey} not found. Auto-registering author in DB...`);
+        const compoundKey = authorPubkey.includes(':') ? authorPubkey : `${authorPubkey}:${authorPubkey}`;
+        await pool.query("INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;", [authorKeyHash, compoundKey]);
+      }
+    }
+
+    const poolCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash != $1", [authorKeyHash]);
+    if (poolCheck.rows.length === 0) {
+      console.log("[AUTO-REGISTER] Empty juror pool. Auto-provisioning mock test jurors for multi-tab testing...");
+      const dummyJurorPubA = "dummy_juror_pubkey_a";
+      const dummyJurorHashA = crypto.createHash("sha256").update(dummyJurorPubA).digest("hex");
+      await pool.query(
+        "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+        [dummyJurorHashA, `${dummyJurorPubA}:${dummyJurorPubA}`]
+      );
+
+      const dummyJurorPubB = "dummy_juror_pubkey_b";
+      const dummyJurorHashB = crypto.createHash("sha256").update(dummyJurorPubB).digest("hex");
+      await pool.query(
+        "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+        [dummyJurorHashB, `${dummyJurorPubB}:${dummyJurorPubB}`]
+      );
+    }
+
+    // 7. Insert post into decentralized_posts
     const safeGeohash = geohash.substring(0, 20);
-    const authorPubkey = req.user?.id || "";
     await pool.query({
       text: `
         INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, encrypted_payload, author_pubkey, status, sprt_score, submitted_at)
