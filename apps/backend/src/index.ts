@@ -659,6 +659,9 @@ const handlePostArbitration = async (req: any, res: any) => {
   }
 };
 
+// Transient vote trace map to track juror voting speed and decision for rewards audit
+const transientVoteTracker = new Map<string, Array<{ jurorId: string; verdict: string; votedAt: number }>>();
+
 const handleVoteArbitration = async (req: any, res: any) => {
   try {
     console.log("[VOTE INCOMING RAW BODY]:", req.body);
@@ -692,6 +695,21 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
     const reputation_key = req.user?.id || "";
     const cleanRepKey = reputation_key.split(':')[0];
+
+    // Resolve the incoming juror's reputation key to its key_hash (User.id)
+    let jurorIdHash = "";
+    if (reputation_key.length === 64 && !reputation_key.includes(':')) {
+      jurorIdHash = reputation_key;
+    } else if (reputation_key.includes(':')) {
+      jurorIdHash = crypto.createHash("sha256").update(reputation_key).digest("hex");
+    } else {
+      const keyCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1", [`${reputation_key}:%`]);
+      if (keyCheck.rows.length > 0) {
+        jurorIdHash = keyCheck.rows[0].key_hash;
+      } else {
+        jurorIdHash = crypto.createHash("sha256").update(reputation_key).digest("hex");
+      }
+    }
 
     ipfs_hash = ipfs_hash || "";
     if (!ipfs_hash) {
@@ -769,6 +787,15 @@ const handleVoteArbitration = async (req: any, res: any) => {
       values: [ipfs_hash, vote_decision]
     });
 
+    // Track vote choice and timestamp for rewards speed audit
+    const postVotes = transientVoteTracker.get(ipfs_hash) || [];
+    postVotes.push({
+      jurorId: jurorIdHash || cleanRepKey,
+      verdict: vote_status,
+      votedAt: Date.now()
+    });
+    transientVoteTracker.set(ipfs_hash, postVotes);
+
     // 6. Execute Quorum threshold evaluation based on assigned jury panel size
     const totalJurorsRes = await pool.query("SELECT COUNT(*) as count FROM post_encapsulations WHERE ipfs_hash = $1", [ipfs_hash]);
     const totalJurors = parseInt(totalJurorsRes.rows[0]?.count || "0", 10);
@@ -789,6 +816,40 @@ const handleVoteArbitration = async (req: any, res: any) => {
       } else if (rejectionRatio > 0.5) {
         verdict = "REJECTED";
         await pool.query("UPDATE decentralized_posts SET status = 'REJECTED' WHERE ipfs_hash = $1 AND status != 'REJECTED'", [ipfs_hash]);
+      }
+    }
+
+    if (verdict !== "UNDECIDED") {
+      try {
+        const postRes = await pool.query("SELECT submitted_at FROM decentralized_posts WHERE ipfs_hash = $1", [ipfs_hash]);
+        const submittedAt = new Date(postRes.rows[0]?.submitted_at || Date.now()).getTime();
+        const trackerVotes = transientVoteTracker.get(ipfs_hash) || [];
+        
+        // Jurors who voted matching the final consensus decision
+        const correctVotes = trackerVotes.filter(v => v.verdict === vote_status);
+        
+        // Sort correct votes by speed (timestamp delta ascending, i.e. fastest first)
+        correctVotes.sort((a, b) => a.votedAt - b.votedAt);
+        
+        const BASE_REWARD = 100;
+        const rankedJurors = correctVotes.map((v, index) => {
+          const speedTierMultiplier = Math.max(0.5, 1.0 - (index * 0.15)); // Tiered scaling multiplier
+          const rewardAmount = BASE_REWARD * speedTierMultiplier;
+          const latencyMs = v.votedAt - submittedAt;
+          
+          return {
+            rank: index + 1,
+            jurorId: v.jurorId,
+            latencyMs: latencyMs,
+            multiplier: speedTierMultiplier,
+            reward: rewardAmount
+          };
+        });
+
+        console.log(`🏆 [REWARDS AUDIT] Post ${ipfs_hash} consensus reached: ${verdict}`);
+        console.log(`🏆 [REWARDS AUDIT] Correct jurors ranked by speed:`, JSON.stringify(rankedJurors, null, 2));
+      } catch (err) {
+        console.error("Error executing speed rewards audit:", err);
       }
     }
 
