@@ -1343,6 +1343,14 @@ export const ReportingHub: React.FC = () => {
 
       let targetKeys = finalTargetKeys;
 
+      console.log("🚀 [TRACE: FE-SUBMIT] Current Logged-in User ID (publicKeyHex):", publicKeyHex);
+      console.log("🚀 [TRACE: FE-SUBMIT] Fetched Juror Public Keys count (targetKeys):", targetKeys?.length);
+      console.log("🚀 [TRACE: FE-SUBMIT] Juror Targets:", targetKeys?.map((k: any) => ({
+        jurorId: k.split(':')[0],
+        phone: "ZK_ANONYMOUS",
+        keyPreview: (k.split(':')[1] || k).slice(0, 12)
+      })));
+
       console.warn("🔍 [JURY DIAGNOSTICS] decoyRing fetched:", decoyRing);
       console.warn("🔍 [JURY DIAGNOSTICS] publicKeyHex (Author):", publicKeyHex);
       console.warn("🔍 [JURY DIAGNOSTICS] targetKeys after prioritizing/shuffling:", targetKeys);
@@ -1569,6 +1577,7 @@ export const JuryDuties: React.FC = () => {
       setError(null);
       try {
         const myKeys = await getOrCreateKeyPair();
+        console.log("📬 [TRACE: FE-JURY-FETCH] Juror Tab Logged-in User ID (publicKeyHex):", myKeys.publicKeyHex);
         const response = await apiClient.get(`arbitration/tasks?juror_pubkey=${encodeURIComponent(myKeys.publicKeyHex || "")}`, {
           signal: abortController.signal,
           cache: "no-store",
@@ -1577,6 +1586,7 @@ export const JuryDuties: React.FC = () => {
           },
         } as any);
 
+        console.log("📬 [TRACE: FE-JURY-FETCH] Response from /api/jury/tasks (raw):", response.data);
         console.warn("RAW JURY TASKS:", response.data);
         console.warn("[JURY QUEUE RAW RESPONSE]:", response.data);
         if (Array.isArray(response.data)) {

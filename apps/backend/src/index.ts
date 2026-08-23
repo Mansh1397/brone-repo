@@ -429,6 +429,14 @@ const handleGetArbitration = async (req: any, res: any) => {
 
 const handlePostArbitration = async (req: any, res: any) => {
   try {
+    console.log("📥 [TRACE: BE-POST-CREATE] Received Request from Author ID:", req.user?.id || req.body?.authorId);
+    try {
+      const allUsersRes = await pool.query("SELECT key_hash, public_key_hex, created_at FROM anonymous_public_keys;");
+      console.log("📥 [TRACE: BE-POST-CREATE] Total Users in DB:", allUsersRes.rows.length);
+      console.log("📥 [TRACE: BE-POST-CREATE] Existing Users:", JSON.stringify(allUsersRes.rows));
+    } catch (e) {
+      console.error("Error reading users in diagnostics:", e);
+    }
     console.warn("[TRUE POST CREATION]:", Object.keys(req.body));
     console.warn("[POST CREATION INCOMING]:", {
       hasEncryptedPayload: !!req.body.encrypted_payload,
@@ -581,6 +589,18 @@ const handlePostArbitration = async (req: any, res: any) => {
       } catch (dbErr) {
         console.warn("🚨 [DB INSERT ERROR] 🚨:", dbErr);
       }
+    }
+
+    console.log("💾 [TRACE: BE-POST-CREATE] Created Post ID:", ipfs_hash);
+    try {
+      const createdTasksRes = await pool.query("SELECT ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key FROM post_encapsulations WHERE ipfs_hash = $1", [ipfs_hash]);
+      console.log("💾 [TRACE: BE-POST-CREATE] Created JuryTasks count:", createdTasksRes.rows.length);
+      console.log("💾 [TRACE: BE-POST-CREATE] Assigned Task details (Juror IDs):", createdTasksRes.rows.map((t: any) => ({
+        jurorId: t.juror_pubkey,
+        postId: t.ipfs_hash
+      })));
+    } catch (e) {
+      console.error("Error reading tasks in diagnostics:", e);
     }
 
     return res.status(201).json({
@@ -796,6 +816,9 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorPubkey = (req.query.juror_pubkey as string) || req.user?.id || "";
     const jurorId = jurorPubkey.split(':')[0] || jurorPubkey;
 
+    console.log("🔍 [TRACE: BE-JURY-FETCH] Incoming Request User ID:", req.user?.id);
+    console.log("🔍 [TRACE: BE-JURY-FETCH] Incoming Request jurorPubkey:", req.query.juror_pubkey);
+
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
     const authorFilter = bypassValidation ? "" : "AND (dp.author_pubkey IS NULL OR dp.author_pubkey != $2)";
@@ -833,6 +856,18 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
         created_at: row.submitted_at
       };
     }).filter((post: any) => post.hasKem && post.hasPayload && post.hasWrappedKey);
+
+    console.log(`🔍 [TRACE: BE-JURY-FETCH] Found ${posts.length} tasks for User ID: ${req.user?.id}`);
+    
+    try {
+      const allTasksInDb = await pool.query("SELECT ipfs_hash, juror_pubkey, kem_ciphertext FROM post_encapsulations");
+      console.log(`🔍 [TRACE: BE-JURY-FETCH] Total JuryTasks across ENTIRE DB: ${allTasksInDb.rows.length}`, allTasksInDb.rows.map((t: any) => ({
+        jurorId: t.juror_pubkey,
+        postId: t.ipfs_hash
+      })));
+    } catch (e) {
+      console.error("Error reading all tasks in diagnostics:", e);
+    }
 
     console.warn("[OUTGOING JURY TASKS]:", posts.map((t: any) => ({ id: t.ipfs_hash, hasKem: t.hasKem, hasWrappedKey: t.hasWrappedKey, hasPayload: t.hasPayload })));
 
