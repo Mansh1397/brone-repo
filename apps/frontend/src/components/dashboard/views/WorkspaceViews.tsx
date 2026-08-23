@@ -1648,9 +1648,12 @@ export const JuryDuties: React.FC = () => {
           // ignore
         }
 
-        const rawItems = Array.isArray(response.data)
-          ? response.data.filter((item: any) => !votedHashes.includes(item.ipfs_hash) && item.kem_ciphertext && item.wrapped_key)
-          : [];
+        const responseData = response.data;
+        const rawArray = Array.isArray(responseData)
+          ? responseData
+          : (responseData && Array.isArray((responseData as any).tasks) ? (responseData as any).tasks : []);
+
+        const rawItems = rawArray.filter((item: any) => !votedHashes.includes(item.ipfs_hash) && item.kem_ciphertext && item.wrapped_key);
 
         // Strip telemetry, generate non-sequential keyHash by hashing text + salt (content-derived)
         const hydrated = rawItems.map((item: any) => {

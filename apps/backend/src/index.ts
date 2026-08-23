@@ -1160,6 +1160,31 @@ const handleGetUserStats = async (req: any, res: any) => {
 v1Router.get("/reputation/:key", requireAuth, handleGetUserStats);
 v1Router.get("/user/stats", requireAuth, handleGetUserStats);
 
+v1Router.post("/admin/reset", async (req: any, res: any) => {
+  try {
+    console.warn("🧹 [DB WIPE] Manual wipe request received. Clearing all tables...");
+    await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
+    transientVoteTracker.clear();
+    console.log("🧹 [DB WIPE] Successfully cleared all users, posts, tasks, and votes for fresh 3-tab testing.");
+    return res.status(200).json({ success: true, message: "Database wiped successfully." });
+  } catch (error: any) {
+    console.error("🧹 [DB WIPE ERROR] Failed manually wiping database:", error);
+    return res.status(500).json({ error: "Failed to wipe database" });
+  }
+});
+v1Router.post("/reset", async (req: any, res: any) => {
+  try {
+    console.warn("🧹 [DB WIPE] Manual wipe request received. Clearing all tables...");
+    await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
+    transientVoteTracker.clear();
+    console.log("🧹 [DB WIPE] Successfully cleared all users, posts, tasks, and votes for fresh 3-tab testing.");
+    return res.status(200).json({ success: true, message: "Database wiped successfully." });
+  } catch (error: any) {
+    console.error("🧹 [DB WIPE ERROR] Failed manually wiping database:", error);
+    return res.status(500).json({ error: "Failed to wipe database" });
+  }
+});
+
 app.use("/api/v1", v1Router);
 app.use("/", v1Router);
 
