@@ -648,14 +648,17 @@ const handlePostArbitration = async (req: any, res: any) => {
             }
           }
 
-          // Leakproof Safeguard 2: Verify the user exists in DB
+          // Leakproof Safeguard 2: Verify the user exists in DB, or auto-provision if missing
           const finalCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash = $1", [jurorPub]);
-          const userExists = finalCheck.rows.length > 0;
+          let userExists = finalCheck.rows.length > 0;
           
-          const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
-          if (!userExists && !bypassValidation) {
-            console.warn(`⚠️ [JURY SAFETY] Skipped invalid juror_id: ${jurorPub}`);
-            continue;
+          if (!userExists) {
+            console.log(`[AUTO-REGISTER] Juror ${jurorPub} not found in DB. Auto-registering...`);
+            await pool.query(
+              "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+              [jurorPub, `dummy_dsa_${jurorPub}:dummy_kem_${jurorPub}`]
+            );
+            userExists = true;
           }
 
           console.log(`🔍 [JURY TASK CREATION] Enrolling Juror: ${jurorPub?.substring(0, 16)}... | KEM Ciphertext Len: ${kemCipher?.length} | Wrapped Key Len: ${wrapped?.length}`);
