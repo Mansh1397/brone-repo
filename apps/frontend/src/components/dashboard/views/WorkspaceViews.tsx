@@ -336,6 +336,13 @@ export const decryptPayload = async (task: any, localPrivateKeyRaw: Uint8Array |
   }
 };
 
+async function sha256(message: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await window.crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 const encryptPayloadWithKey = async (text: string, aesKey: Uint8Array): Promise<string> => {
   const subtle = window.crypto.subtle;
   const key = await subtle.importKey(
@@ -1438,9 +1445,10 @@ export const ReportingHub: React.FC = () => {
           );
 
           const wrappedKeyBytes = new Uint8Array(wrappedKeyBuffer);
+          const cleanJurorIdHash = await sha256(keyStr);
 
           encapsulations.push({
-            juror_id: jurorId,
+            juror_id: cleanJurorIdHash,
             kem_ciphertext: uint8ArrayToHex(cipherText),
             wrapped_key: uint8ArrayToHex(wrappedKeyBytes)
           });

@@ -575,10 +575,42 @@ const handlePostArbitration = async (req: any, res: any) => {
         console.log(`📦 [JURY DISTRIBUTION] Post created ID: ${ipfs_hash} | Assigned to Juror IDs:`, encapArray.map((enc: any) => enc.juror_id || enc.pubkey || enc.target_pubkey));
         console.log(`🔍 [JURY TASK CREATION] Inserting ${encapArray.length} encapsulations for IPFS Hash: ${ipfs_hash}`);
         for (const encap of encapArray) {
-          const jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey || "";
+          let jurorPub = encap.juror_id || encap.pubkey || encap.target_pubkey || "";
           const kemCipher = encap.kem_ciphertext || encap.ciphertext || encap.encapsulation || "";
           const wrapped = encap.wrapped_key || encap.wrappedKey || "";
           
+          // Leakproof Safeguard 1: If jurorPub looks like a raw public key (>64 chars), resolve it to database key_hash (User.id)
+          if (jurorPub && jurorPub.length > 64) {
+            if (jurorPub.includes(':')) {
+              // Compound key
+              const computedHash = crypto.createHash("sha256").update(jurorPub).digest("hex");
+              const userCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash = $1", [computedHash]);
+              if (userCheck.rows.length > 0) {
+                jurorPub = computedHash;
+              } else {
+                jurorPub = computedHash; // Decoy hash
+              }
+            } else {
+              // Raw DSA key
+              const userCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1", [`${jurorPub}:%`]);
+              if (userCheck.rows.length > 0) {
+                jurorPub = userCheck.rows[0].key_hash;
+              } else {
+                jurorPub = crypto.createHash("sha256").update(jurorPub).digest("hex"); // Decoy hash
+              }
+            }
+          }
+
+          // Leakproof Safeguard 2: Verify the user exists in DB
+          const finalCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash = $1", [jurorPub]);
+          const userExists = finalCheck.rows.length > 0;
+          
+          const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
+          if (!userExists && !bypassValidation) {
+            console.warn(`⚠️ [JURY SAFETY] Skipped invalid juror_id: ${jurorPub}`);
+            continue;
+          }
+
           console.log(`🔍 [JURY TASK CREATION] Enrolling Juror: ${jurorPub?.substring(0, 16)}... | KEM Ciphertext Len: ${kemCipher?.length} | Wrapped Key Len: ${wrapped?.length}`);
           const insertRes = await pool.query(
             `INSERT INTO post_encapsulations (ipfs_hash, juror_pubkey, kem_ciphertext, wrapped_key) VALUES ($1, $2, $3, $4) RETURNING *;`,
@@ -817,7 +849,22 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorId = jurorPubkey.split(':')[0] || jurorPubkey;
 
     console.log("🔍 [TRACE: BE-JURY-FETCH] Incoming Request User ID:", req.user?.id);
-    console.log("🔍 [TRACE: BE-JURY-FETCH] Incoming Request jurorPubkey:", req.query.juror_pubkey);
+    
+    // Resolve the incoming jurorPubkey to its key_hash (which acts as the User.id)
+    let jurorIdHash = "";
+    if (jurorPubkey.length === 64 && !jurorPubkey.includes(':')) {
+      jurorIdHash = jurorPubkey;
+    } else if (jurorPubkey.includes(':')) {
+      jurorIdHash = crypto.createHash("sha256").update(jurorPubkey).digest("hex");
+    } else {
+      // If only raw DSA key is provided, lookup the matching key_hash
+      const keyCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1", [`${jurorPubkey}:%`]);
+      if (keyCheck.rows.length > 0) {
+        jurorIdHash = keyCheck.rows[0].key_hash;
+      } else {
+        jurorIdHash = crypto.createHash("sha256").update(jurorPubkey).digest("hex");
+      }
+    }
 
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
@@ -828,10 +875,10 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       result = await pool.query(`
         SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
         FROM decentralized_posts dp
-        INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND (LOWER(pe.juror_pubkey) = LOWER($3) OR LOWER(pe.juror_pubkey) = LOWER($4))
+        INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND LOWER(pe.juror_pubkey) = LOWER($3)
         WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING' ${authorFilter}
         ORDER BY dp.submitted_at DESC LIMIT 10
-      `, [geohashFilter, req.user?.id || "", jurorId, jurorPubkey]);
+      `, [geohashFilter, req.user?.id || "", jurorIdHash]);
     } catch (getDbError) {
       console.warn("🚨 [DB SELECT ERROR] 🚨:", getDbError);
       throw getDbError;
