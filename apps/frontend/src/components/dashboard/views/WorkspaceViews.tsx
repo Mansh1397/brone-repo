@@ -1651,21 +1651,27 @@ export const JuryDuties: React.FC = () => {
         const responseData = response.data;
         const rawArray = Array.isArray(responseData)
           ? responseData
-          : (responseData && Array.isArray((responseData as any).tasks) ? (responseData as any).tasks : []);
+          : (responseData && Array.isArray((responseData as any).tasks)
+              ? (responseData as any).tasks
+              : (responseData && Array.isArray((responseData as any).data) ? (responseData as any).data : []));
 
-        const rawItems = rawArray.filter((item: any) => !votedHashes.includes(item.ipfs_hash) && item.kem_ciphertext && item.wrapped_key);
+        const rawItems = rawArray.filter((item: any) => {
+          if (!item) return false;
+          const ipfsHashVal = item.ipfs_hash || item.id || item.postId;
+          return !votedHashes.includes(ipfsHashVal);
+        });
 
         // Strip telemetry, generate non-sequential keyHash by hashing text + salt (content-derived)
         const hydrated = rawItems.map((item: any) => {
-          const ipfs_hash = item.ipfs_hash || "QmPotholeReported";
+          const ipfs_hash = item.ipfs_hash || item.id || item.postId || "QmPotholeReported";
           const salt = Math.random().toString(36).substring(2, 9);
           const keyHash = `arb_${ipfs_hash}_${salt}`;
           return {
             ipfs_hash,
             keyHash,
-            encrypted_payload: item.encrypted_payload || "",
-            kem_ciphertext: item.kem_ciphertext || "",
-            wrapped_key: item.wrapped_key || "",
+            encrypted_payload: item.encrypted_payload || item.payload || "",
+            kem_ciphertext: item.kem_ciphertext || item.ciphertext || "",
+            wrapped_key: item.wrapped_key || item.wrappedKey || "",
             ring_signature: item.ring_signature
           };
         });
