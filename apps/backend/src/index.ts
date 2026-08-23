@@ -849,6 +849,13 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorId = jurorPubkey.split(':')[0] || jurorPubkey;
 
     console.log("🔍 [TRACE: BE-JURY-FETCH] Incoming Request User ID:", req.user?.id);
+    console.log("🔍 [ARBITRATION DIAGNOSTICS] req.query:", JSON.stringify(req.query));
+    console.log("🔍 [ARBITRATION DIAGNOSTICS] req.params:", JSON.stringify(req.params));
+    console.log("🔍 [ARBITRATION DIAGNOSTICS] req.user:", JSON.stringify(req.user));
+    
+    // Log the exact variables being passed into the query
+    const jurorPubkeyParam = req.query.juror_pubkey;
+    console.log("🔍 [ARBITRATION DIAGNOSTICS] juror_pubkey type:", typeof jurorPubkeyParam, "value length:", String(jurorPubkeyParam).length);
     
     // Resolve the incoming jurorPubkey to its key_hash (which acts as the User.id)
     let jurorIdHash = "";
