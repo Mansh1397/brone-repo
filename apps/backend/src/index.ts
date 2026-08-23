@@ -874,15 +874,24 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     let jurorIdHash = "";
     if (jurorPubkey.length === 64 && !jurorPubkey.includes(':')) {
       jurorIdHash = jurorPubkey;
-    } else if (jurorPubkey.includes(':')) {
-      jurorIdHash = crypto.createHash("sha256").update(jurorPubkey).digest("hex");
     } else {
-      // If only raw DSA key is provided, lookup the matching key_hash
-      const keyCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1", [`${jurorPubkey}:%`]);
+      const sliceVal = jurorPubkey.slice(0, 32);
+      const keyCheck = await pool.query(
+        "SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1 OR public_key_hex LIKE $2 OR key_hash = $3",
+        [`%${sliceVal}%`, `%${jurorPubkey}%`, jurorPubkey]
+      );
       if (keyCheck.rows.length > 0) {
         jurorIdHash = keyCheck.rows[0].key_hash;
-      } else {
+        console.log(`🔍 [JURY RESOLUTION] Resolved jurorPubkey parameter to database key_hash: ${jurorIdHash}`);
+      } else if (jurorPubkey.includes(':')) {
         jurorIdHash = crypto.createHash("sha256").update(jurorPubkey).digest("hex");
+      } else {
+        const keyCheckDsa = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE public_key_hex LIKE $1", [`${jurorPubkey}:%`]);
+        if (keyCheckDsa.rows.length > 0) {
+          jurorIdHash = keyCheckDsa.rows[0].key_hash;
+        } else {
+          jurorIdHash = crypto.createHash("sha256").update(jurorPubkey).digest("hex");
+        }
       }
     }
 
