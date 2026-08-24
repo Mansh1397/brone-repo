@@ -997,16 +997,24 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
       }
     }
 
+    const idOptions = [
+      jurorIdHash,
+      jurorId,
+      jurorPubkey,
+      req.user?.id || ""
+    ].filter(Boolean).map(id => id.toLowerCase());
+    const uniqueIds = Array.from(new Set(idOptions));
+
     const geohashFilter = req.query.geohash ? `${req.query.geohash}%` : '%';
     const bypassValidation = process.env.BYPASS_SECURITY_CHECKS === 'true';
 
     let queryText = `
       SELECT dp.ipfs_hash, dp.geohash, dp.ring_signature, dp.encrypted_payload, dp.author_pubkey, dp.status, dp.sprt_score, dp.submitted_at, pe.kem_ciphertext, pe.wrapped_key
       FROM decentralized_posts dp
-      INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND LOWER(pe.juror_pubkey) = LOWER($2)
+      INNER JOIN post_encapsulations pe ON pe.ipfs_hash = dp.ipfs_hash AND LOWER(pe.juror_pubkey) = ANY($2)
       WHERE dp.geohash LIKE $1 AND dp.status = 'PENDING'
     `;
-    const params: any[] = [geohashFilter, jurorIdHash];
+    const params: any[] = [geohashFilter, uniqueIds];
 
     if (!bypassValidation) {
       params.push(req.user?.id || "");
