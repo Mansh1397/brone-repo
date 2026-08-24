@@ -5,6 +5,7 @@ import {
   ReportingHub,
   JuryDuties,
   CapitalLedger,
+  getOrCreateKeyPair,
 } from "../dashboard/views/WorkspaceViews";
 import { AuthGateway } from "../auth/AuthGateway";
 import { loadAndDecryptState } from "../../utils/storage";
@@ -55,6 +56,14 @@ export const AppShell: React.FC = () => {
     }
     checkSession();
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      getOrCreateKeyPair().catch((err) => {
+        console.error("Failed to auto-register keys:", err);
+      });
+    }
+  }, [isAuthenticated]);
 
   const renderActiveView = () => {
     switch (activeTab) {

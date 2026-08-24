@@ -833,7 +833,7 @@ const registerKeyOnce = (pubKey: string) => {
 };
 
 // Generates or retrieves from in-memory cache the user's post-quantum credentials (ML-DSA-87 & ML-KEM-1024)
-const getOrCreateKeyPair = async (): Promise<{
+export const getOrCreateKeyPair = async (): Promise<{
   privateKey: Uint8Array;
   dsaPrivateKey: Uint8Array;
   kemPrivateKey: Uint8Array;
@@ -1369,19 +1369,17 @@ export const ReportingHub: React.FC = () => {
 
       // Split into real registered keys (contain ':') and decoy keys (no ':')
       const realKeys = eligibleJurorKeys.filter(k => k.includes(':'));
-      const decoyKeys = eligibleJurorKeys.filter(k => !k.includes(':'));
 
-      // Prioritize real keys exclusively
-      let finalTargetKeys = shuffleArray(realKeys);
-
-      // If we have no real keys at all, fall back to decoy keys to prevent empty selection
-      if (finalTargetKeys.length === 0) {
-        const targetPanelSize = Math.max(1, Math.min(eligibleJurorKeys.length, Math.ceil(eligibleJurorKeys.length * 0.6)));
-        const shuffledDecoys = shuffleArray(decoyKeys);
-        finalTargetKeys = shuffledDecoys.slice(0, targetPanelSize);
+      // If we have no real keys at all, throw error and halt
+      if (realKeys.length === 0) {
+        alert("No active jurors available. Please open another browser tab to register a juror.");
+        setStatusMessage("ERROR: No active jurors available. Please open another browser tab to register a juror.");
+        setIsSubmitting(false);
+        return; // Halt submission
       }
 
-      let targetKeys = finalTargetKeys;
+      // Prioritize and shuffle real keys exclusively. Do NOT use or pad with fake decoy keys.
+      let targetKeys = shuffleArray(realKeys);
 
       console.log("🚀 [TRACE: FE-SUBMIT] Current Logged-in User ID (publicKeyHex):", publicKeyHex);
       console.log("🚀 [TRACE: FE-SUBMIT] Fetched Juror Public Keys count (targetKeys):", targetKeys?.length);
@@ -1394,11 +1392,6 @@ export const ReportingHub: React.FC = () => {
       console.warn("🔍 [JURY DIAGNOSTICS] decoyRing fetched:", decoyRing);
       console.warn("🔍 [JURY DIAGNOSTICS] publicKeyHex (Author):", publicKeyHex);
       console.warn("🔍 [JURY DIAGNOSTICS] targetKeys after prioritizing/shuffling:", targetKeys);
-
-      if (targetKeys.length === 0) {
-        alert("Cannot secure post: No active users found in your area to act as jurors.");
-        return; // Halt submission
-      }
 
       console.log(`📦 [FE ENCAPSULATION] Encapsulating payload using REAL keys for Juror IDs:`, targetKeys.map(k => k.split(':')[0] || k));
 
