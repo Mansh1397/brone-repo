@@ -569,23 +569,7 @@ const handlePostArbitration = async (req: any, res: any) => {
       }
     }
 
-    const poolCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash != $1", [authorKeyHash]);
-    if (poolCheck.rows.length === 0) {
-      console.log("[AUTO-REGISTER] Empty juror pool. Auto-provisioning mock test jurors for multi-tab testing...");
-      const dummyJurorPubA = "dummy_juror_pubkey_a";
-      const dummyJurorHashA = crypto.createHash("sha256").update(dummyJurorPubA).digest("hex");
-      await pool.query(
-        "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
-        [dummyJurorHashA, `${dummyJurorPubA}:${dummyJurorPubA}`]
-      );
 
-      const dummyJurorPubB = "dummy_juror_pubkey_b";
-      const dummyJurorHashB = crypto.createHash("sha256").update(dummyJurorPubB).digest("hex");
-      await pool.query(
-        "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
-        [dummyJurorHashB, `${dummyJurorPubB}:${dummyJurorPubB}`]
-      );
-    }
 
     // 7. Insert post into decentralized_posts
     const safeGeohash = geohash.substring(0, 20);
@@ -652,18 +636,7 @@ const handlePostArbitration = async (req: any, res: any) => {
             }
           }
 
-          // Leakproof Safeguard 2: Verify the user exists in DB, or auto-provision if missing
-          const finalCheck = await pool.query("SELECT key_hash FROM anonymous_public_keys WHERE key_hash = $1", [jurorPub]);
-          let userExists = finalCheck.rows.length > 0;
-          
-          if (!userExists) {
-            console.log(`[AUTO-REGISTER] Juror ${jurorPub} not found in DB. Auto-registering...`);
-            await pool.query(
-              "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
-              [jurorPub, `dummy_dsa_${jurorPub}:dummy_kem_${jurorPub}`]
-            );
-            userExists = true;
-          }
+
 
           console.log(`🔍 [JURY TASK CREATION] Enrolling Juror: ${jurorPub?.substring(0, 16)}... | KEM Ciphertext Len: ${kemCipher?.length} | Wrapped Key Len: ${wrapped?.length}`);
           const insertRes = await pool.query(
