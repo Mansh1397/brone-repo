@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { DashboardGrid } from "../DashboardGrid";
 import { apiClient } from "../../../api/apiClient";
 import axios from "axios";
+import { useVotedTasks } from "../../../hooks/useVotedTasks";
 import {
   blindMessage,
   unblindSignature,
@@ -1617,19 +1618,7 @@ export const JuryDuties: React.FC = () => {
   const [disabledKeys, setDisabledKeys] = useState<Record<string, boolean>>({});
   const [actionLog, setActionLog] = useState("");
   const [errorToast, setErrorToast] = useState<string | null>(null);
-  const [hiddenTasks, setHiddenTasks] = useState<string[]>([]);
-
-  useEffect(() => {
-    try {
-      const storedA = localStorage.getItem("brone_voted_tasks");
-      const storedB = localStorage.getItem("voted_posts");
-      const listA = storedA ? JSON.parse(storedA) : [];
-      const listB = storedB ? JSON.parse(storedB) : [];
-      setHiddenTasks(Array.from(new Set([...listA, ...listB])));
-    } catch (e) {
-      // ignore
-    }
-  }, []);
+  const { votedTasks, addVotedTask } = useVotedTasks();
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1787,23 +1776,9 @@ export const JuryDuties: React.FC = () => {
       });
 
       // Cache voted task locally
-      try {
-        const storedA = localStorage.getItem("brone_voted_tasks");
-        const storedB = localStorage.getItem("voted_posts");
-        const listA = storedA ? JSON.parse(storedA) : [];
-        const listB = storedB ? JSON.parse(storedB) : [];
-        
-        const targetId = targetItem.id || targetItem.ipfs_hash || (targetItem as any).postId || (targetItem as any).post?.id;
-        
-        if (targetId) {
-          if (!listA.includes(targetId)) listA.push(targetId);
-          if (!listB.includes(targetId)) listB.push(targetId);
-          localStorage.setItem("brone_voted_tasks", JSON.stringify(listA));
-          localStorage.setItem("voted_posts", JSON.stringify(listB));
-          setHiddenTasks(Array.from(new Set([...listA, ...listB])));
-        }
-      } catch (e) {
-        // ignore
+      const targetId = targetItem.id || targetItem.ipfs_hash || (targetItem as any).postId || (targetItem as any).post?.id;
+      if (targetId) {
+        addVotedTask(targetId);
       }
 
       // Memory Sanitization: Discard transient key and CID variables
@@ -1862,7 +1837,7 @@ export const JuryDuties: React.FC = () => {
     );
   }
 
-  const visibleTasks = items.filter(task => !hiddenTasks.includes(task.id) && !hiddenTasks.includes(task.ipfs_hash));
+  const visibleTasks = items.filter(task => !votedTasks.includes(task.id) && !votedTasks.includes(task.ipfs_hash));
 
   return (
     <div className="w-full max-w-xl mx-auto p-4 space-y-6 relative">
