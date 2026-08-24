@@ -1741,7 +1741,8 @@ export const JuryDuties: React.FC = () => {
     setActionLog(`Arbitration completed: [${actionType.toUpperCase()}]`);
 
     try {
-      const { privateKey } = await getOrCreateKeyPair();
+      const myKeys = await getOrCreateKeyPair();
+      const privateKey = myKeys.privateKey;
       const vote_status = actionType === "approve" ? "APPROVED" : "REJECTED";
       const blind_ballot_token = window.crypto.randomUUID();
       let ipfs_hash: string | null = targetItem.ipfs_hash;
@@ -1768,7 +1769,8 @@ export const JuryDuties: React.FC = () => {
         ipfs_hash,
         nullifier,
         vote_status,
-        signature_proof: ringSig.challenge
+        signature_proof: ringSig.challenge,
+        juror_pubkey: myKeys.publicKeyHex
       }, {
         headers: {
           "Content-Type": "application/json",
@@ -1801,6 +1803,8 @@ export const JuryDuties: React.FC = () => {
       privKeyHex = null;
       ipfs_hash = null;
     } catch (err: any) {
+      console.error("🚨 VOTE SUBMISSION FAILED:", err);
+      alert(`Vote failed to send! Error: ${err.message || err}`);
       // 4. Rollback state and show overlay toast on network drop
       setItems(previousItems);
       setErrorToast(`Arbitration failed. Restored card layout. Details: ${err.message || "Network Error"}`);
