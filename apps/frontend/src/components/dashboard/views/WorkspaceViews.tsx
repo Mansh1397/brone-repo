@@ -1168,12 +1168,12 @@ export const HomeFeed: React.FC = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
                 <div className="h-10 w-10 rounded-full bg-[#1b2336] border border-[#00E5FF]/30 flex items-center justify-center font-mono font-extrabold text-sm text-[#00E5FF]">
-                  {item.avatar || "AN"}
+                  AN
                 </div>
                 <div>
                   <div className="flex items-center space-x-2">
                     <span className="text-white text-sm font-sans font-bold">
-                      {item.author || "Anonymous Validator"}
+                      Anonymous Validator
                     </span>
                     {/* Glowing green verified checkmark badge */}
                     <span className="bg-emerald-500/10 text-[#00F5A0] border border-emerald-500/30 p-0.5 rounded-full text-xs font-mono font-bold shadow-[0_0_8px_rgba(16,185,129,0.25)] select-none">
@@ -1182,7 +1182,6 @@ export const HomeFeed: React.FC = () => {
                       </svg>
                     </span>
                   </div>
-                  <span className="text-[10px] text-gray-500 font-mono">{item.timestamp || "Recently"}</span>
                 </div>
               </div>
             </div>
