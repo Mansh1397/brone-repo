@@ -352,17 +352,8 @@ v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/increment", handleMetricIncrement);
 
 const handleGetPublicKeys = async (req: any, res: any) => {
-  console.log("🔍 [JURY DIAGNOSTICS] GET /public-keys requested");
   try {
     const dbKeysRes = await pool.query("SELECT key_hash, public_key_hex, created_at FROM anonymous_public_keys;");
-    console.log("🔍 [JURY DIAGNOSTICS] Total registered keys in DB:", dbKeysRes.rows.length);
-    console.log("🔍 [JURY DIAGNOSTICS] Keys details in DB:", dbKeysRes.rows.map((row: any) => ({
-      hash: row.key_hash?.substring(0, 8),
-      created_at: row.created_at,
-      hasColon: row.public_key_hex?.includes(':'),
-      keyPrefix: row.public_key_hex?.substring(0, 16)
-    })));
-
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     
     // 1. Try fetching users created/active in the last 7 days
@@ -382,30 +373,27 @@ const handleGetPublicKeys = async (req: any, res: any) => {
       kemPublicKey: row.public_key_hex
     }));
 
-    console.log(`🔑 [BE PUB-KEYS] Serving full KEM keys for ${jurorKeys.length} registered users. UUIDs:`, jurorKeys.map(k => k.jurorId));
     return res.status(200).json({ keys: jurorKeys });
   } catch (error: any) {
-    console.error("🚨 [JURY DIAGNOSTICS ERROR] Failed to fetch public keys:", error);
+    console.error("🚨 Failed to fetch public keys:", error);
     return res.status(200).json([]);
   }
 };
 
 const handleRegisterPublicKey = async (req: any, res: any) => {
   const { public_key_hex } = req.body;
-  console.log("🔍 [JURY DIAGNOSTICS] POST /keys/register requested. KeyPrefix:", public_key_hex?.substring(0, 16));
   try {
     if (!public_key_hex) {
       return res.status(400).json({ error: "Missing public_key_hex payload" });
     }
     const keyHash = crypto.createHash("sha256").update(public_key_hex).digest("hex");
-    const insertRes = await pool.query({
+    await pool.query({
       text: "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *;",
       values: [keyHash, public_key_hex]
     });
-    console.log("🔍 [JURY DIAGNOSTICS] Inserted key successfully. Row count affected:", insertRes.rows.length);
     return res.status(200).json({ success: true });
   } catch (error: any) {
-    console.error("🚨 [JURY DIAGNOSTICS ERROR] Failed to register anonymous key:", error.message || error);
+    console.error("🚨 Failed to register anonymous key:", error.message || error);
     return res.status(500).json({ error: "Failed to register anonymous key" });
   }
 };
@@ -584,7 +572,6 @@ const handlePostArbitration = async (req: any, res: any) => {
 
     // 7. Insert KEM encapsulations into post_encapsulations for relational querying
     const rawEncap = req.body.encapsulations || req.body.kem_ciphertext || (ring_signature && ring_signature.encapsulations) || [];
-    console.warn("🚨 [RAW KEM PAYLOAD] 🚨 Type:", typeof rawEncap, "Value:", rawEncap);
 
     let encapArray = [];
     if (typeof rawEncap === 'string') {
@@ -596,7 +583,6 @@ const handlePostArbitration = async (req: any, res: any) => {
     }
 
     if (encapArray.length > 0) {
-      console.warn("[ENCAPSULATION SHAPE]:", JSON.stringify(encapArray[0]));
       try {
         await pool.query(`
           CREATE TABLE IF NOT EXISTS post_encapsulations (
@@ -956,14 +942,7 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
     const jurorPubkey = (req.query.juror_pubkey as string) || req.user?.id || "";
     const jurorId = jurorPubkey.split(':')[0] || jurorPubkey;
 
-    console.log("🔍 [TRACE: BE-JURY-FETCH] Incoming Request User ID:", req.user?.id);
-    console.log("🔍 [ARBITRATION DIAGNOSTICS] req.query:", JSON.stringify(req.query));
-    console.log("🔍 [ARBITRATION DIAGNOSTICS] req.params:", JSON.stringify(req.params));
-    console.log("🔍 [ARBITRATION DIAGNOSTICS] req.user:", JSON.stringify(req.user));
-    
-    // Log the exact variables being passed into the query
-    const jurorPubkeyParam = req.query.juror_pubkey;
-    console.log("🔍 [ARBITRATION DIAGNOSTICS] juror_pubkey type:", typeof jurorPubkeyParam, "value length:", String(jurorPubkeyParam).length);
+
     
     // Resolve the incoming jurorPubkey to its key_hash (which acts as the User.id)
     let jurorIdHash = "";
@@ -1043,20 +1022,6 @@ const handleGetArbitrationTasks = async (req: any, res: any) => {
         created_at: row.submitted_at
       };
     }).filter((post: any) => post.hasKem && post.hasPayload && post.hasWrappedKey);
-
-    console.log(`🔍 [TRACE: BE-JURY-FETCH] Found ${posts.length} tasks for User ID: ${req.user?.id}`);
-    
-    try {
-      const allTasksInDb = await pool.query("SELECT ipfs_hash, juror_pubkey, kem_ciphertext FROM post_encapsulations");
-      console.log(`🔍 [TRACE: BE-JURY-FETCH] Total JuryTasks across ENTIRE DB: ${allTasksInDb.rows.length}`, allTasksInDb.rows.map((t: any) => ({
-        jurorId: t.juror_pubkey,
-        postId: t.ipfs_hash
-      })));
-    } catch (e) {
-      console.error("Error reading all tasks in diagnostics:", e);
-    }
-
-    console.warn("[OUTGOING JURY TASKS]:", posts.map((t: any) => ({ id: t.ipfs_hash, hasKem: t.hasKem, hasWrappedKey: t.hasWrappedKey, hasPayload: t.hasPayload })));
 
     return res.status(200).json(posts);
   } catch (error) {
@@ -1149,13 +1114,15 @@ const handleGetUserStats = async (req: any, res: any) => {
       ? Math.round((correctVotesCount / decidedDutiesCount) * 100) 
       : 100;
 
-    return res.status(200).json({
+    const statsData = {
       reputation_key: reputation_key,
       total_posts: totalPublishedPosts,
       total_verifications: totalJuryCompleted,
       rewards_balance: totalRewards,
       verification_accuracy_rate: `${verifiedPercentage}%`
-    });
+    };
+    console.log("📊 [STATS API] Serving stats at", new Date().toISOString(), statsData);
+    return res.status(200).json(statsData);
   } catch (error) {
     console.error("[REPUTATION STATS ERROR]:", error);
     return res.status(500).json({ error: "Internal processing error calculating user stats." });

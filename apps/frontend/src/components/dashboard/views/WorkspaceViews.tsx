@@ -1361,9 +1361,6 @@ export const ReportingHub: React.FC = () => {
         keyPreview: (k.split(':')[1] || k).slice(0, 12)
       })));
 
-      console.warn("🔍 [JURY DIAGNOSTICS] decoyRing fetched:", decoyRing);
-      console.warn("🔍 [JURY DIAGNOSTICS] publicKeyHex (Author):", publicKeyHex);
-      console.warn("🔍 [JURY DIAGNOSTICS] targetKeys after prioritizing/shuffling:", targetKeys);
 
       console.log(`📦 [FE ENCAPSULATION] Encapsulating payload using REAL keys for Juror IDs:`, targetKeys.map(k => k.split(':')[0] || k));
 
@@ -1982,6 +1979,8 @@ export const CapitalLedger: React.FC = () => {
     // Force hot-reload to reset the application state machine
     window.location.reload();
   };
+
+  console.log("🖥️ [STATS UI] Rendering stats data:", reputationData);
 
   const accuracyRate = reputationData?.verification_accuracy_rate !== undefined
     ? (typeof reputationData.verification_accuracy_rate === 'number'
