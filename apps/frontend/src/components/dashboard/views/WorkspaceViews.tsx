@@ -1652,15 +1652,16 @@ export const JuryDuties: React.FC = () => {
         }
 
         // Filter out tasks already voted on by this client
-        let votedHashes: string[] = [];
-        try {
-          const stored = localStorage.getItem("brone_voted_tasks");
-          if (stored) {
-            votedHashes = JSON.parse(stored);
-          }
-        } catch (e) {
-          // ignore
-        }
+         let votedHashes: string[] = [];
+         try {
+           const storedA = localStorage.getItem("brone_voted_tasks");
+           const storedB = localStorage.getItem("voted_posts");
+           const listA = storedA ? JSON.parse(storedA) : [];
+           const listB = storedB ? JSON.parse(storedB) : [];
+           votedHashes = Array.from(new Set([...listA, ...listB]));
+         } catch (e) {
+           // ignore
+         }
 
         const responseData = response.data;
         const rawArray = Array.isArray(responseData)
@@ -1759,11 +1760,18 @@ export const JuryDuties: React.FC = () => {
 
       // Cache voted task locally
       try {
-        const stored = localStorage.getItem("brone_voted_tasks");
-        const list = stored ? JSON.parse(stored) : [];
-        if (targetItem.ipfs_hash && !list.includes(targetItem.ipfs_hash)) {
-          list.push(targetItem.ipfs_hash);
-          localStorage.setItem("brone_voted_tasks", JSON.stringify(list));
+        const storedA = localStorage.getItem("brone_voted_tasks");
+        const storedB = localStorage.getItem("voted_posts");
+        const listA = storedA ? JSON.parse(storedA) : [];
+        const listB = storedB ? JSON.parse(storedB) : [];
+        
+        const targetId = targetItem.ipfs_hash || (targetItem as any).postId || (targetItem as any).post?.id;
+        
+        if (targetId) {
+          if (!listA.includes(targetId)) listA.push(targetId);
+          if (!listB.includes(targetId)) listB.push(targetId);
+          localStorage.setItem("brone_voted_tasks", JSON.stringify(listA));
+          localStorage.setItem("voted_posts", JSON.stringify(listB));
         }
       } catch (e) {
         // ignore

@@ -10,7 +10,13 @@ export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
   const decoyRing: string[] = [];
 
   try {
-    const response = await apiClient.get('public-keys');
+    const response = await apiClient.get('public-keys', {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    });
     const responseData = response.data;
     const rawKeys = Array.isArray(responseData)
       ? responseData
