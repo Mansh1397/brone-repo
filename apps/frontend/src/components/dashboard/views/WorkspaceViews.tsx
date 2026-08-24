@@ -1679,9 +1679,11 @@ export const JuryDuties: React.FC = () => {
         // Strip telemetry, generate non-sequential keyHash by hashing text + salt (content-derived)
         const hydrated = rawItems.map((item: any) => {
           const ipfs_hash = item.ipfs_hash || item.id || item.postId || "QmPotholeReported";
+          const id = item.id || item.ipfs_hash || item.postId || "QmPotholeReported";
           const salt = Math.random().toString(36).substring(2, 9);
           const keyHash = `arb_${ipfs_hash}_${salt}`;
           return {
+            id,
             ipfs_hash,
             keyHash,
             encrypted_payload: item.encrypted_payload || item.payload || "",
@@ -1765,7 +1767,7 @@ export const JuryDuties: React.FC = () => {
         const listA = storedA ? JSON.parse(storedA) : [];
         const listB = storedB ? JSON.parse(storedB) : [];
         
-        const targetId = targetItem.ipfs_hash || (targetItem as any).postId || (targetItem as any).post?.id;
+        const targetId = targetItem.id || targetItem.ipfs_hash || (targetItem as any).postId || (targetItem as any).post?.id;
         
         if (targetId) {
           if (!listA.includes(targetId)) listA.push(targetId);
@@ -1944,11 +1946,14 @@ export const CapitalLedger: React.FC = () => {
     const fetchStats = async () => {
       setIsLoading(true);
       try {
-        const response = await apiClient.get(`reputation/${publicKeyHex}`, {
+        const timestamp = new Date().getTime();
+        const response = await apiClient.get(`reputation/${publicKeyHex}?t=${timestamp}`, {
           signal: abortController.signal,
           cache: "no-store",
           headers: {
             "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
           },
         } as any);
         setReputationData(response.data);
