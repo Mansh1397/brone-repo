@@ -136,7 +136,12 @@ export async function initDB(): Promise<void> {
     `);
     
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_post_encapsulations_ipfs ON post_encapsulations(ipfs_hash);
+      CREATE TABLE IF NOT EXISTS juror_stats (
+        reputation_key VARCHAR(255) PRIMARY KEY,
+        total_posts INTEGER DEFAULT 0,
+        total_verifications INTEGER DEFAULT 0,
+        rewards_balance INTEGER DEFAULT 0
+      );
     `);
 
     console.log('[DB] Zero-Knowledge schema verified.');

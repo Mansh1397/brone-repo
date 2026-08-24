@@ -868,6 +868,39 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
         console.log(`🏆 [REWARDS AUDIT] Post ${ipfs_hash} consensus reached: ${verdict}`);
         console.log(`🏆 [REWARDS AUDIT] Correct jurors ranked by speed:`, JSON.stringify(rankedJurors, null, 2));
+
+        // Save vote stats for correct jurors to database
+        const jurorPubkeyBody = req.body.juror_pubkey || "";
+        let deletionHash = jurorIdHash || cleanRepKey;
+        if (jurorPubkeyBody.length === 64 && !jurorPubkeyBody.includes(':')) {
+          deletionHash = jurorPubkeyBody;
+        } else if (jurorPubkeyBody) {
+          deletionHash = crypto.createHash("sha256").update(jurorPubkeyBody).digest("hex");
+        }
+
+        for (const rJuror of rankedJurors) {
+          try {
+            const keysToUpdate = Array.from(new Set([
+              rJuror.jurorId,
+              jurorPubkeyBody,
+              deletionHash,
+              cleanRepKey
+            ].filter(Boolean)));
+
+            for (const key of keysToUpdate) {
+              await pool.query(`
+                INSERT INTO juror_stats (reputation_key, total_verifications, rewards_balance)
+                VALUES ($1, 1, $2)
+                ON CONFLICT (reputation_key) DO UPDATE SET
+                  total_verifications = juror_stats.total_verifications + 1,
+                  rewards_balance = juror_stats.rewards_balance + $2
+              `, [key, rJuror.reward]);
+              console.log(`💾 [STATS DATABASE] Saved stats for key ${key} (+1 verification, +${rJuror.reward} reward)`);
+            }
+          } catch (dbErr) {
+            console.error(`🚨 [STATS DATABASE ERROR] Failed to save stats for juror ${rJuror.jurorId}:`, dbErr);
+          }
+        }
       } catch (err) {
         console.error("Error executing speed rewards audit:", err);
       }
@@ -1066,35 +1099,51 @@ const handleGetUserStats = async (req: any, res: any) => {
     let correctVotesCount = 0;
     let totalJuryCompleted = 0;
 
-    // 1. Calculate stats from transientVoteTracker
-    for (const [postId, votesArray] of transientVoteTracker.entries()) {
-      try {
-        const postRes = await pool.query("SELECT status, submitted_at FROM decentralized_posts WHERE ipfs_hash = $1", [postId]);
-        if (postRes.rows.length === 0) continue;
-        const postStatus = postRes.rows[0].status;
+    // 1. Query from juror_stats database ledger
+    try {
+      const statsRes = await pool.query(
+        "SELECT SUM(total_verifications) as verifications, SUM(rewards_balance) as rewards FROM juror_stats WHERE reputation_key = $1 OR reputation_key = $2 OR reputation_key = $3",
+        [reputation_key, cleanRepKey, jurorIdHash]
+      );
+      if (statsRes.rows.length > 0 && statsRes.rows[0].verifications !== null) {
+        totalJuryCompleted = parseInt(statsRes.rows[0].verifications || "0", 10);
+        totalRewards = parseInt(statsRes.rows[0].rewards || "0", 10);
+      }
+    } catch (err) {
+      console.error("Failed to query stats from database ledger:", err);
+    }
 
-        const jurorVote = votesArray.find(v => v.jurorId === jurorIdHash || v.jurorId === cleanRepKey);
-        if (jurorVote) {
-          totalJuryCompleted++;
-          if (postStatus === 'APPROVED' || postStatus === 'REJECTED') {
-            decidedDutiesCount++;
-            const consensusVerdict = postStatus === 'APPROVED' ? 'APPROVED' : 'REJECTED';
-            if (jurorVote.verdict === consensusVerdict) {
-              correctVotesCount++;
-              
-              const correctVotes = votesArray.filter(v => v.verdict === consensusVerdict);
-              correctVotes.sort((a, b) => a.votedAt - b.votedAt);
-              const jurorIndex = correctVotes.findIndex(v => v.jurorId === jurorIdHash || v.jurorId === cleanRepKey);
-              
-              if (jurorIndex !== -1) {
-                const speedTierMultiplier = Math.max(0.5, 1.0 - (jurorIndex * 0.15));
-                totalRewards += 100 * speedTierMultiplier;
+    if (totalJuryCompleted === 0) {
+      // Calculate stats from transientVoteTracker as a fallback
+      for (const [postId, votesArray] of transientVoteTracker.entries()) {
+        try {
+          const postRes = await pool.query("SELECT status, submitted_at FROM decentralized_posts WHERE ipfs_hash = $1", [postId]);
+          if (postRes.rows.length === 0) continue;
+          const postStatus = postRes.rows[0].status;
+
+          const jurorVote = votesArray.find(v => v.jurorId === jurorIdHash || v.jurorId === cleanRepKey);
+          if (jurorVote) {
+            totalJuryCompleted++;
+            if (postStatus === 'APPROVED' || postStatus === 'REJECTED') {
+              decidedDutiesCount++;
+              const consensusVerdict = postStatus === 'APPROVED' ? 'APPROVED' : 'REJECTED';
+              if (jurorVote.verdict === consensusVerdict) {
+                correctVotesCount++;
+                
+                const correctVotes = votesArray.filter(v => v.verdict === consensusVerdict);
+                correctVotes.sort((a, b) => a.votedAt - b.votedAt);
+                const jurorIndex = correctVotes.findIndex(v => v.jurorId === jurorIdHash || v.jurorId === cleanRepKey);
+                
+                if (jurorIndex !== -1) {
+                  const speedTierMultiplier = Math.max(0.5, 1.0 - (jurorIndex * 0.15));
+                  totalRewards += 100 * speedTierMultiplier;
+                }
               }
             }
           }
+        } catch (err) {
+          // Skip individual trace errors
         }
-      } catch (err) {
-        // Skip individual trace errors
       }
     }
 
@@ -1135,7 +1184,7 @@ v1Router.get("/user/stats", requireAuth, handleGetUserStats);
 v1Router.post("/admin/reset", async (req: any, res: any) => {
   try {
     console.warn("🧹 [DB WIPE] Manual wipe request received. Clearing all tables...");
-    await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
+    await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger, juror_stats CASCADE;`);
     transientVoteTracker.clear();
     console.log("🧹 [DB WIPE] Successfully cleared all users, posts, tasks, and votes for fresh 3-tab testing.");
     return res.status(200).json({ success: true, message: "Database wiped successfully." });
@@ -1147,7 +1196,7 @@ v1Router.post("/admin/reset", async (req: any, res: any) => {
 v1Router.post("/reset", async (req: any, res: any) => {
   try {
     console.warn("🧹 [DB WIPE] Manual wipe request received. Clearing all tables...");
-    await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
+    await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger, juror_stats CASCADE;`);
     transientVoteTracker.clear();
     console.log("🧹 [DB WIPE] Successfully cleared all users, posts, tasks, and votes for fresh 3-tab testing.");
     return res.status(200).json({ success: true, message: "Database wiped successfully." });
@@ -1191,7 +1240,7 @@ if (process.env.NODE_ENV !== "test") {
 
       try {
         console.warn("[NUCLEAR WIPE] Erasing all users, posts, and votes...");
-        await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
+        await pool.query(`TRUNCATE TABLE decentralized_posts, signatures, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger, juror_stats CASCADE;`);
         console.warn("[NUCLEAR WIPE] Database is now completely empty.");
       } catch (e) {
         console.warn("[NUCLEAR WIPE ERROR]:", e);
@@ -1204,7 +1253,7 @@ if (process.env.NODE_ENV !== "test") {
       if (shouldPurgeStalePosts) {
         try {
           // Nuclear Clean Slate database flush
-          await pool.query(`TRUNCATE TABLE signatures, decentralized_posts, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger CASCADE;`);
+          await pool.query(`TRUNCATE TABLE signatures, decentralized_posts, nullifiers, anonymous_votes, anonymous_public_keys, post_encapsulations, reputation_ledger, juror_stats CASCADE;`);
           console.log('[NUCLEAR RESET] Clean slate database flush completed successfully.');
           
           await pool.query(`
