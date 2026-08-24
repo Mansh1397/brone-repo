@@ -818,6 +818,16 @@ const getServerPublicKey = async (): Promise<RSAPublicKey> => {
   return cachedServerKeyPromise;
 };
 
+const registerKeyOnce = (pubKey: string) => {
+  const lastRegistered = localStorage.getItem('pq_registered_key');
+  if (lastRegistered === pubKey) {
+    console.log("[ZK IDENTITY] Key already registered to backend in this browser environment. Skipping registration.");
+  } else {
+    schedulePublicKeyRegistration(pubKey);
+    localStorage.setItem('pq_registered_key', pubKey);
+  }
+};
+
 // Generates or retrieves from in-memory cache the user's post-quantum credentials (ML-DSA-87 & ML-KEM-1024)
 const getOrCreateKeyPair = async (): Promise<{
   privateKey: Uint8Array;
@@ -838,7 +848,7 @@ const getOrCreateKeyPair = async (): Promise<{
     const dsaPrivateKey = hexToBytes(existingDsaPriv);
     const kemPrivateKey = hexToBytes(existingPriv);
     // Register public key anonymously to the backend
-    schedulePublicKeyRegistration(existingPub);
+    registerKeyOnce(existingPub);
     const keypairObj = {
       privateKey: dsaPrivateKey,
       dsaPrivateKey,
@@ -865,7 +875,7 @@ const getOrCreateKeyPair = async (): Promise<{
       localStorage.setItem('pq_kem_public_key', stored.pqPublicKeyHex);
       localStorage.setItem('pq_dsa_private_key', stored.pqDsaPrivateKeyHex);
       // Register public key anonymously to the backend
-      schedulePublicKeyRegistration(stored.pqPublicKeyHex);
+      registerKeyOnce(stored.pqPublicKeyHex);
 
       const keypairObj = {
         privateKey: dsaPrivateKey,
@@ -900,7 +910,7 @@ const getOrCreateKeyPair = async (): Promise<{
   localStorage.setItem('pq_kem_public_key', publicKeyHex);
   localStorage.setItem('pq_dsa_private_key', dsaPrivHex);
   // Register public key anonymously to the backend
-  schedulePublicKeyRegistration(publicKeyHex);
+  registerKeyOnce(publicKeyHex);
 
   if (stored) {
     stored.pqDsaPrivateKeyHex = dsaPrivHex;
