@@ -1764,13 +1764,27 @@ export const JuryDuties: React.FC = () => {
       const jitterDelay = Math.floor(Math.random() * 2000) + 500;
       await new Promise((resolve) => setTimeout(resolve, jitterDelay));
 
+      // Extract local public key safely with local_kem_keys fallback
+      let pubKey = myKeys.publicKeyHex;
+      try {
+        const storedKeysStr = localStorage.getItem('local_kem_keys');
+        if (storedKeysStr) {
+          const storedKeys = JSON.parse(storedKeysStr);
+          pubKey = storedKeys.publicKeyHex || storedKeys.publicKey || pubKey;
+        }
+      } catch (e) {}
+
+      if (!pubKey) {
+        console.error("Missing local public key! Cannot submit cleanup parameter.");
+      }
+
       // 6. Dispatch vote POST omitting credentials and only sending minimal proof
       await apiClient.post("arbitration/vote", {
         ipfs_hash,
         nullifier,
         vote_status,
         signature_proof: ringSig.challenge,
-        juror_pubkey: myKeys.publicKeyHex
+        juror_pubkey: pubKey
       }, {
         headers: {
           "Content-Type": "application/json",

@@ -802,21 +802,23 @@ const handleVoteArbitration = async (req: any, res: any) => {
     });
 
     // Delete the task encapsulation record so it doesn't reappear
-    const jurorPubkeyBody = req.body.juror_pubkey || "";
-    let deletionHash = jurorIdHash || cleanRepKey;
-    if (jurorPubkeyBody) {
+    if (req.body.juror_pubkey) {
+      const jurorPubkeyBody = req.body.juror_pubkey || "";
+      let deletionHash = jurorIdHash || cleanRepKey;
       if (jurorPubkeyBody.length === 64 && !jurorPubkeyBody.includes(':')) {
         deletionHash = jurorPubkeyBody;
       } else {
         deletionHash = crypto.createHash("sha256").update(jurorPubkeyBody).digest("hex");
       }
-    }
-    if (deletionHash) {
-      const deleteRes = await pool.query(
-        "DELETE FROM post_encapsulations WHERE ipfs_hash = $1 AND (LOWER(juror_pubkey) = LOWER($2) OR LOWER(juror_pubkey) = LOWER($3));",
-        [ipfs_hash, deletionHash, jurorPubkeyBody]
-      );
-      console.log(`🧹 [JURY CLEANUP] Deleted ${deleteRes.rowCount} tasks for Hash: ${deletionHash}`);
+      if (deletionHash) {
+        const deleteRes = await pool.query(
+          "DELETE FROM post_encapsulations WHERE ipfs_hash = $1 AND (LOWER(juror_pubkey) = LOWER($2) OR LOWER(juror_pubkey) = LOWER($3));",
+          [ipfs_hash, deletionHash, jurorPubkeyBody]
+        );
+        console.log(`🧹 [JURY CLEANUP] Deleted ${deleteRes.rowCount} tasks for Hash: ${deletionHash}`);
+      }
+    } else {
+      console.warn("⚠️ [JURY CLEANUP] WARNING: juror_pubkey was missing from the request body. Task was NOT deleted!");
     }
 
     // Track vote choice and timestamp for rewards speed audit
