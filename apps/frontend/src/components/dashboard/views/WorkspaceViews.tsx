@@ -1,3 +1,7 @@
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
+
 import React, { useState, useEffect, useRef } from "react";
 import { DashboardGrid } from "../DashboardGrid";
 import { apiClient } from "../../../api/apiClient";
@@ -1620,6 +1624,19 @@ export const JuryDuties: React.FC = () => {
   const [disabledKeys, setDisabledKeys] = useState<Record<string, boolean>>({});
   const [actionLog, setActionLog] = useState("");
   const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [hiddenTasks, setHiddenTasks] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const storedA = localStorage.getItem("brone_voted_tasks");
+      const storedB = localStorage.getItem("voted_posts");
+      const listA = storedA ? JSON.parse(storedA) : [];
+      const listB = storedB ? JSON.parse(storedB) : [];
+      setHiddenTasks(Array.from(new Set([...listA, ...listB])));
+    } catch (e) {
+      // ignore
+    }
+  }, []);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -1774,6 +1791,7 @@ export const JuryDuties: React.FC = () => {
           if (!listB.includes(targetId)) listB.push(targetId);
           localStorage.setItem("brone_voted_tasks", JSON.stringify(listA));
           localStorage.setItem("voted_posts", JSON.stringify(listB));
+          setHiddenTasks(Array.from(new Set([...listA, ...listB])));
         }
       } catch (e) {
         // ignore
@@ -1833,6 +1851,8 @@ export const JuryDuties: React.FC = () => {
     );
   }
 
+  const visibleTasks = items.filter(task => !hiddenTasks.includes(task.id) && !hiddenTasks.includes(task.ipfs_hash));
+
   return (
     <div className="w-full max-w-xl mx-auto p-4 space-y-6 relative">
       {errorToast && (
@@ -1851,7 +1871,7 @@ export const JuryDuties: React.FC = () => {
         </div>
       )}
 
-      {items.length === 0 ? (
+      {visibleTasks.length === 0 ? (
         <div className="bg-[#121826] border border-[#1F2937] rounded-xl p-10 text-center space-y-2">
           <span className="text-3xl">🛡️</span>
           <h3 className="text-white font-mono font-bold">QUEUE CLEARED</h3>
@@ -1861,7 +1881,7 @@ export const JuryDuties: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-6">
-          {items.map((item) => {
+          {visibleTasks.map((item) => {
             const isDisabled = disabledKeys[item.keyHash] || false;
             return (
               <div

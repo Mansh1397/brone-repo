@@ -10,7 +10,12 @@ export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
   const decoyRing: string[] = [];
 
   try {
-    const response = await apiClient.get('public-keys', {
+    try {
+      localStorage.removeItem('cached_juror_keys');
+      localStorage.removeItem('public_keys');
+    } catch (e) {}
+
+    const response = await apiClient.get(`public-keys?t=${Date.now()}`, {
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
