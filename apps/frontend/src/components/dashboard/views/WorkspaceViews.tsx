@@ -584,8 +584,8 @@ const forceJurorDecryption = async (task: any, localPrivKeyRaw: any, mlKemObj: a
     }
 
     currentStep = `ML-KEM Decapsulate (PrivKey Len: ${privKeyBytes.length})`;
-    if (privKeyBytes.length !== 1184 && privKeyBytes.length !== 2400 && privKeyBytes.length !== 3168) {
-       return `[DIAGNOSTIC FATAL]: Invalid ML-KEM Private Key length: ${privKeyBytes.length}. Key is corrupted or encrypted.`;
+    if (!privKeyBytes || privKeyBytes.length < 32) {
+       return `[DIAGNOSTIC FATAL]: Missing or malformed ML-KEM Private Key.`;
     }
     const secret = await mlKemObj.decapsulate(kemBytes, privKeyBytes);
 
@@ -1413,9 +1413,9 @@ export const ReportingHub: React.FC = () => {
           }
         }
 
-        // 3. Validate Kyber Size
-        if (jurorPubKeyBytes.length !== 1184 && jurorPubKeyBytes.length !== 1568 && jurorPubKeyBytes.length !== 3168) {
-          throw new Error(`🚨 ROUTING FATAL: Invalid Juror Public Key length (${jurorPubKeyBytes.length} bytes).`);
+        // 3. Validate Kyber Size (Relaxed Check)
+        if (!jurorPubKeyBytes || jurorPubKeyBytes.length < 32) {
+          throw new Error(`🚨 ROUTING FATAL: Missing or malformed Juror Public Key.`);
         }
 
         try {
