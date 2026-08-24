@@ -1200,35 +1200,7 @@ export const HomeFeed: React.FC = () => {
               </div>
             )}
 
-            {/* Action buttons & consensus metrics */}
-            <div className="flex items-center justify-between border-t border-[#1F2937]/50 pt-3">
-              <div className="flex items-center space-x-4">
-                {/* Like Button */}
-                <button
-                  onClick={() => handleLike(item.vdomKey)}
-                  className={`flex items-center space-x-1.5 text-xs font-mono transition-colors duration-200 ${hasLiked[item.vdomKey] ? "text-red-400 font-bold" : "text-gray-500 hover:text-gray-300"
-                    }`}
-                >
-                  <svg className="w-4 h-4" fill={hasLiked[item.vdomKey] ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                  </svg>
-                  <span>{likesCount[item.vdomKey] ?? 0}</span>
-                </button>
 
-                {/* Comment Mock Button */}
-                <button className="flex items-center space-x-1.5 text-xs text-gray-500 hover:text-gray-300 font-mono transition-colors duration-200">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                  </svg>
-                  <span>{item.comments ?? 0}</span>
-                </button>
-              </div>
-
-              {/* Verification details */}
-              <div className="text-[10px] text-gray-500 font-mono">
-                Consensus: <span className="text-[#00F5A0] font-bold">{item.consensus || "N/A"}</span> ({item.validations ?? 0} reviews)
-              </div>
-            </div>
           </div>
         ))}
       </div>
@@ -2025,29 +1997,11 @@ export const CapitalLedger: React.FC = () => {
           Capital Ledger
         </h2>
         <button
-          onClick={() => setShowSettings(!showSettings)}
-          className="p-2 hover:bg-[#1b2336] rounded-lg transition-colors duration-200 focus:outline-none"
+          onClick={handleSignOut}
+          className="text-sm font-medium text-red-500 hover:text-red-600 px-3 py-1 transition-colors"
         >
-          <svg className="w-5 h-5 text-gray-400 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
+          Log out
         </button>
-
-        {/* Dropdown Popup */}
-        {showSettings && (
-          <div className="absolute right-0 top-12 w-64 bg-[#121826] border border-[#1F2937] rounded-lg shadow-xl p-4 z-50 space-y-4">
-            <div className="text-xs text-gray-400 font-mono">
-              Account: <span className="text-white font-bold">@user123</span>
-            </div>
-            <button
-              onClick={handleSignOut}
-              className="w-full text-left text-xs text-red-400 hover:text-red-300 font-mono border-t border-[#1F2937] pt-3"
-            >
-              Sign Out
-            </button>
-          </div>
-        )}
       </div>
 
       {
