@@ -11,14 +11,19 @@ export async function fetchDecoyRing(n: number = 5): Promise<string[]> {
 
   try {
     const response = await apiClient.get('public-keys');
-    if (Array.isArray(response.data)) {
-      const keys = [...response.data].filter(k => typeof k === 'string' && k.length > 0);
-      while (decoyRing.length < n && keys.length > 0) {
-        const randIdx = Math.floor(Math.random() * keys.length);
-        const selected = keys.splice(randIdx, 1)[0];
-        if (!decoyRing.includes(selected)) {
-          decoyRing.push(selected);
-        }
+    const responseData = response.data;
+    const rawKeys = Array.isArray(responseData)
+      ? responseData
+      : (responseData && Array.isArray(responseData.keys)
+          ? responseData.keys.map((k: any) => k.kemPublicKey || k.public_key_hex || k)
+          : []);
+
+    const keys = [...rawKeys].filter(k => typeof k === 'string' && k.length > 0);
+    while (decoyRing.length < n && keys.length > 0) {
+      const randIdx = Math.floor(Math.random() * keys.length);
+      const selected = keys.splice(randIdx, 1)[0];
+      if (!decoyRing.includes(selected)) {
+        decoyRing.push(selected);
       }
     }
   } catch (err) {

@@ -367,19 +367,23 @@ const handleGetPublicKeys = async (req: any, res: any) => {
     
     // 1. Try fetching users created/active in the last 7 days
     let result = await pool.query(
-      "SELECT public_key_hex FROM anonymous_public_keys WHERE created_at >= $1 ORDER BY created_at DESC LIMIT 11;",
+      "SELECT key_hash, public_key_hex FROM anonymous_public_keys WHERE created_at >= $1 ORDER BY created_at DESC LIMIT 11;",
       [sevenDaysAgo]
     );
 
     // 2. Fallback for local testing if strict geo/timestamp returns 0 users
     if (result.rows.length === 0) {
       console.log("⚠️ [JURY POOL] Strict 7-day filter returned 0 users. Falling back to all registered test users.");
-      result = await pool.query("SELECT public_key_hex FROM anonymous_public_keys ORDER BY created_at DESC LIMIT 11;");
+      result = await pool.query("SELECT key_hash, public_key_hex FROM anonymous_public_keys ORDER BY created_at DESC LIMIT 11;");
     }
 
-    const keys = result.rows.map((row: any) => row.public_key_hex);
-    console.log("🔍 [JURY DIAGNOSTICS] Returning keys count:", keys.length);
-    return res.status(200).json(keys);
+    const jurorKeys = result.rows.map((row: any) => ({
+      jurorId: row.key_hash,
+      kemPublicKey: row.public_key_hex
+    }));
+
+    console.log(`🔑 [BE PUB-KEYS] Serving full KEM keys for ${jurorKeys.length} registered users. UUIDs:`, jurorKeys.map(k => k.jurorId));
+    return res.status(200).json({ keys: jurorKeys });
   } catch (error: any) {
     console.error("🚨 [JURY DIAGNOSTICS ERROR] Failed to fetch public keys:", error);
     return res.status(200).json([]);

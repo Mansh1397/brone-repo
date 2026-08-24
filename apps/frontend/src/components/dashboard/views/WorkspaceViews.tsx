@@ -1386,6 +1386,8 @@ export const ReportingHub: React.FC = () => {
         return; // Halt submission
       }
 
+      console.log(`📦 [FE ENCAPSULATION] Encapsulating payload using REAL keys for Juror IDs:`, targetKeys.map(k => k.split(':')[0] || k));
+
       const encapsulations: any[] = [];
       for (let i = 0; i < targetKeys.length; i++) {
         const keyStr = targetKeys[i];
@@ -1413,13 +1415,7 @@ export const ReportingHub: React.FC = () => {
 
         // 3. Validate Kyber Size
         if (jurorPubKeyBytes.length !== 1184 && jurorPubKeyBytes.length !== 1568 && jurorPubKeyBytes.length !== 3168) {
-          console.warn(`🚨 Invalid Juror Public Key length (${jurorPubKeyBytes.length} bytes). Generating fallback decoy.`);
-          try {
-            const dummyKem = ml_kem1024.keygen();
-            jurorPubKeyBytes = dummyKem.publicKey;
-          } catch (e) {
-            throw new Error(`🚨 ROUTING FATAL: Invalid Juror Public Key length (${jurorPubKeyBytes.length} bytes).`);
-          }
+          throw new Error(`🚨 ROUTING FATAL: Invalid Juror Public Key length (${jurorPubKeyBytes.length} bytes).`);
         }
 
         try {
