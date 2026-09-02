@@ -561,14 +561,38 @@ const handlePostArbitration = async (req: any, res: any) => {
 
     // 7. Insert post into decentralized_posts
     const safeGeohash = geohash.substring(0, 20);
+    const resolvedAuthorKey = authorKeyHash || authorPubkey;
     await pool.query({
       text: `
         INSERT INTO decentralized_posts (ipfs_hash, geohash, ring_signature, encrypted_payload, author_pubkey, status, sprt_score, submitted_at)
         VALUES ($1, $2, $3, $4, $5, 'PENDING', 0.0000, CURRENT_TIMESTAMP)
         ON CONFLICT (ipfs_hash) DO UPDATE SET encrypted_payload = EXCLUDED.encrypted_payload, author_pubkey = EXCLUDED.author_pubkey;
       `,
-      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), payload, authorPubkey]
+      values: [ipfs_hash, safeGeohash, JSON.stringify(ring_signature), payload, resolvedAuthorKey]
     });
+
+    // Increment author's post count in juror_stats under key_hash and user.id
+    if (resolvedAuthorKey) {
+      const authorKeysToUpdate = Array.from(new Set([
+        authorKeyHash,
+        authorPubkey,
+        req.user?.id
+      ].filter((k): k is string => Boolean(k) && k.length <= 255)));
+
+      for (const aKey of authorKeysToUpdate) {
+        try {
+          await pool.query(`
+            INSERT INTO juror_stats (reputation_key, total_posts, total_verifications, rewards_balance)
+            VALUES ($1, 1, 0, 0)
+            ON CONFLICT (reputation_key) DO UPDATE SET
+              total_posts = juror_stats.total_posts + 1;
+          `, [aKey]);
+          console.log(`💾 [AUTHOR STATS DATABASE] Saved post creation for author key ${aKey} (+1 post)`);
+        } catch (dbErr) {
+          console.error(`🚨 [AUTHOR STATS DATABASE ERROR] Failed to save post count for author ${aKey}:`, dbErr);
+        }
+      }
+    }
 
     // 7. Insert KEM encapsulations into post_encapsulations for relational querying
     const rawEncap = req.body.encapsulations || req.body.kem_ciphertext || (ring_signature && ring_signature.encapsulations) || [];
@@ -907,6 +931,39 @@ const handleVoteArbitration = async (req: any, res: any) => {
             console.error(`🚨 [STATS DATABASE ERROR] Failed to save stats for juror ${rJuror.jurorId}:`, dbErr);
           }
         }
+        // Credit the author on APPROVED consensus
+        if (verdict === "APPROVED") {
+          try {
+            const authorRes = await pool.query(
+              "SELECT author_pubkey FROM decentralized_posts WHERE ipfs_hash = $1",
+              [ipfs_hash]
+            );
+            const rawAuthor = authorRes.rows[0]?.author_pubkey || "";
+            if (rawAuthor) {
+              let authorKeyHash = rawAuthor;
+              if (authorKeyHash.length > 255 || authorKeyHash.includes(':')) {
+                authorKeyHash = crypto.createHash("sha256").update(rawAuthor).digest("hex");
+              }
+              const AUTHOR_REWARD = 200;
+              const authorKeysToUpdate = Array.from(new Set([
+                authorKeyHash,
+                rawAuthor
+              ].filter((k): k is string => Boolean(k) && k.length <= 255)));
+
+              for (const aKey of authorKeysToUpdate) {
+                await pool.query(`
+                  INSERT INTO juror_stats (reputation_key, total_posts, total_verifications, rewards_balance)
+                  VALUES ($1, 0, 0, $2)
+                  ON CONFLICT (reputation_key) DO UPDATE SET
+                    rewards_balance = juror_stats.rewards_balance + $2
+                `, [aKey, AUTHOR_REWARD]);
+                console.log(`🏆 [AUTHOR REWARDS AUDIT] Credited author ${aKey} (+${AUTHOR_REWARD} reward for consensus approval)`);
+              }
+            }
+          } catch (authorRewardErr) {
+            console.error("Error crediting author reward on consensus:", authorRewardErr);
+          }
+        }
       } catch (err) {
         console.error("Error executing speed rewards audit:", err);
       }
@@ -1114,15 +1171,24 @@ const handleGetUserStats = async (req: any, res: any) => {
     let correctVotesCount = 0;
     let totalJuryCompleted = 0;
 
+    let totalDbPosts = 0;
+
     // 1. Query from juror_stats database ledger
     try {
       const statsRes = await pool.query(
-        "SELECT SUM(total_verifications) as verifications, SUM(rewards_balance) as rewards FROM juror_stats WHERE reputation_key = $1 OR reputation_key = $2 OR reputation_key = $3",
-        [reputation_key, cleanRepKey, jurorIdHash]
+        "SELECT SUM(total_posts) as posts, SUM(total_verifications) as verifications, SUM(rewards_balance) as rewards FROM juror_stats WHERE reputation_key = $1 OR reputation_key = $2 OR reputation_key = $3 OR reputation_key = $4",
+        [reputation_key, cleanRepKey, jurorIdHash, rawReputationKey.substring(0, 255)]
       );
-      if (statsRes.rows.length > 0 && statsRes.rows[0].verifications !== null) {
-        totalJuryCompleted = parseInt(statsRes.rows[0].verifications || "0", 10);
-        totalRewards = parseInt(statsRes.rows[0].rewards || "0", 10);
+      if (statsRes.rows.length > 0) {
+        if (statsRes.rows[0].verifications !== null) {
+          totalJuryCompleted = parseInt(statsRes.rows[0].verifications || "0", 10);
+        }
+        if (statsRes.rows[0].rewards !== null) {
+          totalRewards = parseInt(statsRes.rows[0].rewards || "0", 10);
+        }
+        if (statsRes.rows[0].posts !== null) {
+          totalDbPosts = parseInt(statsRes.rows[0].posts || "0", 10);
+        }
       }
     } catch (err) {
       console.error("Failed to query stats from database ledger:", err);
@@ -1166,13 +1232,15 @@ const handleGetUserStats = async (req: any, res: any) => {
     let totalPublishedPosts = 0;
     try {
       const publishedRes = await pool.query(
-        "SELECT COUNT(*) as count FROM decentralized_posts WHERE (author_pubkey = $1 OR author_pubkey = $2 OR author_pubkey = $3) AND status = 'APPROVED'",
-        [reputation_key, cleanRepKey, jurorIdHash]
+        "SELECT COUNT(*) as count FROM decentralized_posts WHERE (author_pubkey = $1 OR author_pubkey = $2 OR author_pubkey = $3 OR author_pubkey = $4)",
+        [reputation_key, cleanRepKey, jurorIdHash, rawReputationKey.substring(0, 255)]
       );
       totalPublishedPosts = parseInt(publishedRes.rows[0]?.count || "0", 10);
     } catch (err) {
       // Skip
     }
+
+    const finalTotalPosts = Math.max(totalPublishedPosts, totalDbPosts);
 
     const verifiedPercentage = decidedDutiesCount > 0 
       ? Math.round((correctVotesCount / decidedDutiesCount) * 100) 
@@ -1180,7 +1248,7 @@ const handleGetUserStats = async (req: any, res: any) => {
 
     const statsData = {
       reputation_key: reputation_key,
-      total_posts: totalPublishedPosts,
+      total_posts: finalTotalPosts,
       total_verifications: totalJuryCompleted,
       rewards_balance: totalRewards,
       verification_accuracy_rate: `${verifiedPercentage}%`
