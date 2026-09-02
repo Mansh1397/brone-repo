@@ -880,12 +880,18 @@ const handleVoteArbitration = async (req: any, res: any) => {
 
         for (const rJuror of rankedJurors) {
           try {
-            const keysToUpdate = Array.from(new Set([
+            const rawCandidateKeys = [
               rJuror.jurorId,
-              jurorPubkeyBody,
               deletionHash,
-              cleanRepKey
-            ].filter(Boolean)));
+              jurorIdHash,
+              req.user?.id
+            ];
+
+            const keysToUpdate = Array.from(new Set(
+              rawCandidateKeys
+                .filter((k): k is string => Boolean(k))
+                .map((k) => (k.length > 255 ? crypto.createHash("sha256").update(k).digest("hex") : k))
+            ));
 
             for (const key of keysToUpdate) {
               await pool.query(`
@@ -1077,7 +1083,13 @@ v1Router.post("/posts/extract", requireAuth, handleIPFSExtraction);
 
 const handleGetUserStats = async (req: any, res: any) => {
   try {
-    const reputation_key = req.params.key || (req.query.juror_pubkey as string) || req.user?.id || req.query.key_hash || "";
+    const rawReputationKey = req.params.key || (req.query.juror_pubkey as string) || req.user?.id || req.query.key_hash || "";
+    
+    let reputation_key = rawReputationKey;
+    if (reputation_key.length > 255) {
+      reputation_key = crypto.createHash("sha256").update(rawReputationKey).digest("hex");
+    }
+
     let jurorIdHash = "";
     if (reputation_key.length === 64 && !reputation_key.includes(':')) {
       jurorIdHash = reputation_key;
@@ -1092,7 +1104,10 @@ const handleGetUserStats = async (req: any, res: any) => {
       }
     }
 
-    const cleanRepKey = reputation_key.split(':')[0];
+    let cleanRepKey = reputation_key.split(':')[0];
+    if (cleanRepKey.length > 255) {
+      cleanRepKey = crypto.createHash("sha256").update(cleanRepKey).digest("hex");
+    }
 
     let totalRewards = 0;
     let decidedDutiesCount = 0;

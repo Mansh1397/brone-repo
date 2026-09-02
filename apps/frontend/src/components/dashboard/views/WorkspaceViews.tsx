@@ -833,6 +833,15 @@ const registerKeyOnce = (pubKey: string) => {
   }
 };
 
+const sha256Hex = async (text: string): Promise<string> => {
+  if (!text) return "";
+  if (text.length === 64 && !text.includes(':')) return text;
+  const msgUint8 = new TextEncoder().encode(text);
+  const hashBuffer = await window.crypto.subtle.digest("SHA-256", msgUint8);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+};
+
 // Generates or retrieves from in-memory cache the user's post-quantum credentials (ML-DSA-87 & ML-KEM-1024)
 export const getOrCreateKeyPair = async (): Promise<{
   privateKey: Uint8Array;
@@ -1921,7 +1930,8 @@ export const CapitalLedger: React.FC = () => {
       setIsLoading(true);
       try {
         const timestamp = new Date().getTime();
-        const response = await apiClient.get(`reputation/${publicKeyHex}?t=${timestamp}`, {
+        const keyHash = await sha256Hex(publicKeyHex);
+        const response = await apiClient.get(`reputation/${keyHash}?t=${timestamp}`, {
           signal: abortController.signal,
           cache: "no-store",
           headers: {
