@@ -8,7 +8,8 @@ import { handleBlindStamp, getPublicKeyConfig } from "./controllers/stampControl
 import { handleMetricIncrement } from "./controllers/ledgerController";
 import { initializeApplicationServer, configureServerTimeouts } from "./utils/bootstrap";
 import { pool } from './controllers/ringValidator';
-import { powValidator, requestOtp, verifyOtp, sandboxOtpCache } from "./controllers/identityProvider";
+import { powValidator, requestOtp, verifyOtp, registerAnonymousKey, sandboxOtpCache } from "./controllers/identityProvider";
+import { getArbitrationFeed } from "./controllers/taskController";
 import { initDB } from "./utils/dbInit";
 
 const app = express();
@@ -134,6 +135,10 @@ app.use((req: any, res: any, next: any) => {
     req.path === "/auth/verify-otp" ||
     req.path === "/api/v1/auth/verify-otp" ||
     req.path === "/api/auth/verify-otp" ||
+    req.path === "/auth/register-key" ||
+    req.path === "/api/v1/auth/register-key" ||
+    req.path === "/arbitration/feed" ||
+    req.path === "/api/v1/arbitration/feed" ||
     req.path === "/feed" ||
     req.path === "/api/v1/feed";
 
@@ -278,9 +283,13 @@ export const requireAuth = (req: any, res: any, next: any) => {
   }
 
   const [encodedHeader, encodedPayload, signature] = parts;
-  const secret = process.env.JWT_SECRET || "beta_development_secret";
+  const secret = process.env.JWT_SECRET;
+  if (!secret && process.env.NODE_ENV !== 'test') {
+    throw new Error("CRITICAL: Missing environment variables");
+  }
+  const safeSecret = secret || "TEST_SUITE_JWT_SECRET_KEY_32BYTES";
 
-  const expectedSignature = crypto.createHmac("sha256", secret)
+  const expectedSignature = crypto.createHmac("sha256", safeSecret)
     .update(`${encodedHeader}.${encodedPayload}`)
     .digest("base64url");
 
@@ -403,6 +412,8 @@ v1Router.post("/keys/register", handleRegisterPublicKey);
 
 v1Router.post("/auth/request-otp", powValidator, requestOtp);
 v1Router.post("/auth/verify-otp", verifyOtp);
+v1Router.post("/auth/register-key", registerAnonymousKey);
+v1Router.get("/arbitration/feed", getArbitrationFeed);
 
 const mockEncryptedData: Record<string, string> = {};
 
@@ -1367,10 +1378,10 @@ if (process.env.NODE_ENV !== "test") {
         console.log(`📊 [SCHEMA & JUROR DIAGNOSTICS] Juror details:`, JSON.stringify(keysRes.rows, null, 2));
 
         // Log memory cached sandboxed OTP entries (which contain phone numbers and OTP codes!)
-        const sandboxEntries = Array.from(sandboxOtpCache.entries()).map(([phone, data]) => ({
-          phoneNumber: phone,
-          otpCode: data.code,
-          expiresAt: new Date(data.expiresAt).toISOString()
+        const sandboxEntries = Array.from(sandboxOtpCache.entries()).map((entry: any) => ({
+          phoneNumber: entry[0],
+          otpCode: entry[1]?.code,
+          expiresAt: entry[1]?.expiresAt ? new Date(entry[1].expiresAt).toISOString() : null
         }));
         console.log(`📊 [SCHEMA & JUROR DIAGNOSTICS] Transient memory-cached phone numbers/OTPs:`, JSON.stringify(sandboxEntries, null, 2));
       } catch (diagErr) {

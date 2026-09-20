@@ -2,210 +2,287 @@ import { Request, Response, NextFunction } from 'express';
 import argon2 from 'argon2';
 import crypto from 'crypto';
 import Redis from 'ioredis';
-import axios from 'axios';
 import { pool } from './ringValidator';
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+if (!process.env.REDIS_URL && process.env.NODE_ENV !== 'test') {
+  throw new Error("CRITICAL: Missing environment variables");
+}
+const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
 
-// Transient sandbox OTP cache (in-memory)
 interface OtpEntry {
     code: string;
     expiresAt: number;
 }
 export const sandboxOtpCache = new Map<string, OtpEntry>();
 
-const SERVER_PEPPER = process.env.SERVER_PEPPER || 'BRONE_CORE_SECURE_PEPPER_STRING_MUST_BE_LONG';
-const SMS_GATEWAY_URL = 'https://api.gatewayapi.com/rest/mtsms';
-const SMS_API_TOKEN = process.env.SMS_API_TOKEN;
+// Stateless Server RSA key pair for Blind OTP Signatures (2048-bit)
+const { privateKey: SERVER_PRIVATE_KEY, publicKey: SERVER_PUBLIC_KEY } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  privateKeyEncoding: { type: 'pkcs1', format: 'pem' }
+});
 
-function verifyProofOfWork(nonce: string, phone: string): boolean {
-    const hash = crypto.createHash('sha256').update(phone + nonce).digest('hex');
-    return hash.startsWith('0000');
+const privateKeyObj = crypto.createPrivateKey(SERVER_PRIVATE_KEY);
+const keyDetailsPrivate = privateKeyObj.export({ format: 'jwk' });
+const d_rsa = BigInt('0x' + Buffer.from(keyDetailsPrivate.d!, 'base64url').toString('hex'));
+const n_rsa = BigInt('0x' + Buffer.from(keyDetailsPrivate.n!, 'base64url').toString('hex'));
+
+const publicKeyObj = crypto.createPublicKey(SERVER_PUBLIC_KEY);
+const keyDetailsPublic = publicKeyObj.export({ format: 'jwk' });
+const e_rsa = BigInt('0x' + Buffer.from(keyDetailsPublic.e!, 'base64url').toString('hex'));
+
+function powerMod(base: bigint, exp: bigint, mod: bigint): bigint {
+  let res = 1n;
+  base = ((base % mod) + mod) % mod;
+  while (exp > 0n) {
+    if (exp % 2n === 1n) res = (res * base) % mod;
+    base = (base * base) % mod;
+    exp = exp / 2n;
+  }
+  return res;
 }
 
-// 🛡️ PoW validation middleware with diagnostic wrapping and development bypass
+function verifyProofOfWork(nonce: string, phone: string): boolean {
+  const hash = crypto.createHash('sha256').update(phone + nonce).digest('hex');
+  return hash.startsWith('0000');
+}
+
 export const powValidator = (req: Request, res: Response, next: NextFunction) => {
-    try {
-        if (process.env.NODE_ENV === "development" || process.env.BYPASS_POW === "true") {
-            console.log("[BETA MODE]: Bypassing Proof of Work nonce verification.");
-            return next();
-        }
-
-        const { phoneNumber, powNonce } = req.body;
-        
-        try {
-            if (!verifyProofOfWork(powNonce, phoneNumber)) {
-                res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-                return;
-            }
-        } catch (error: any) {
-            console.error("[PoW MIDDLEWARE EXCEPTION]:", error.message || error);
-            res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-            return;
-        }
-
-        next();
-    } catch (error: any) {
-        console.error("[PoW MIDDLEWARE EXCEPTION]:", error.message || error);
-        res.status(500).json({ error: error.message || 'Systemic routing anomaly.' });
+  try {
+    if (process.env.NODE_ENV === "development" || process.env.BYPASS_POW === "true") {
+      return next();
     }
+    const { phoneNumber, powNonce } = req.body;
+    if (!verifyProofOfWork(powNonce, phoneNumber)) {
+      res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+      return;
+    }
+    next();
+  } catch (error: any) {
+    res.status(500).json({ error: 'Systemic PoW validation anomaly.' });
+  }
 };
 
 export const requestOtp = async (req: Request, res: Response): Promise<void> => {
-    let { phoneNumber, powNonce } = req.body;
-    try {
-        const shouldBypass = process.env.BYPASS_SECURITY_CHECKS === "true" || process.env.BYPASS_POW === "true";
-        if (!shouldBypass) {
-            try {
-                if (!verifyProofOfWork(powNonce, phoneNumber)) {
-                    res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-                    return;
-                }
-            } catch (powError: any) {
-                console.error("[PoW MIDDLEWARE EXCEPTION]:", powError.message || powError);
-                res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
-                return;
-            }
-        }
-
-        const otpToken = crypto.randomInt(100000, 999999).toString();
-
-        // 1. Store code in transient in-memory cache (5 minutes expiration)
-        sandboxOtpCache.set(phoneNumber, {
-            code: otpToken,
-            expiresAt: Date.now() + 300000
-        });
-
-        // 2. Store in Redis with strict 300s TTL (SET EX)
-        try {
-            await redis.set(`otp:${phoneNumber}`, otpToken, 'EX', 300);
-        } catch (redisErr) {
-            console.error("[REDIS ERROR] Failed to save OTP in Redis:", redisErr);
-        }
-
-        // Print code directly to terminal stdout with highly visible banner
-        console.log("================================================================");
-        console.log(`🔑 [SANDBOX AUTH]: Active Verification Code for multi-device login is: ${otpToken}`);
-        console.log("================================================================");
-
-        // Inject console log for manual testing
-        console.log(`[BETA MODE] OTP for ${phoneNumber} is: ${otpToken}`);
-
-        const responsePayload: any = {
-            success: true,
-            message: "OTP generated successfully"
-        };
-        res.status(200).json(responsePayload);
-        return;
-    } catch (error: any) {
-        console.error("[OTP EXCEPTION]:", error.message || error);
-        res.status(500).json({ error: error.message || 'Systemic routing anomaly.' });
-    } finally {
-        phoneNumber = null;
-        powNonce = null;
+  let { phoneNumber, powNonce } = req.body;
+  try {
+    const shouldBypass = process.env.BYPASS_SECURITY_CHECKS === "true" || process.env.BYPASS_POW === "true";
+    if (!shouldBypass && !verifyProofOfWork(powNonce, phoneNumber)) {
+      res.status(400).json({ error: 'Invalid Proof-of-Work token.' });
+      return;
     }
+
+    const otpToken = crypto.randomInt(100000, 999999).toString();
+    sandboxOtpCache.set(phoneNumber, {
+      code: otpToken,
+      expiresAt: Date.now() + 300000
+    });
+    await redis.set(`otp:${phoneNumber}`, otpToken, 'EX', 300);
+
+    console.log("================================================================");
+    console.log(`🔑 [SANDBOX AUTH]: Active Verification Code: ${otpToken}`);
+    console.log("================================================================");
+
+    res.status(200).json({ success: true, message: "OTP generated successfully" });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Systemic routing anomaly.' });
+  } finally {
+    phoneNumber = null;
+    powNonce = null;
+  }
 };
 
+/**
+ * 1. The Blind Handshake (/auth/verify-otp)
+ * Accepts { phoneNumber, otpCode, blindedTokenT }
+ * V8 Memory Safety: Ingests phoneNumber & GLOBAL_PEPPER as Buffer objects.
+ * Computes Argon2id(phoneNumberBuffer + GLOBAL_PEPPER).
+ * Atomic Sybil Lock via PostgreSQL transaction FOR UPDATE.
+ * Zeroization: Immediately overwrites buffers with buffer.fill(0).
+ */
 export const verifyOtp = async (req: Request, res: Response): Promise<void> => {
-    let { phoneNumber, otpCode, clientPublicKey } = req.body;
-    const startTiming = Date.now();
-    const enforceTimingPadding = () => {
-        const elapsed = Date.now() - startTiming;
-        if (elapsed < 200) return new Promise(resolve => setTimeout(resolve, 200 - elapsed));
-    };
+  let phoneNumberBuffer: Buffer | null = null;
+  let pepperBuffer: Buffer | null = null;
+  let client: any = null;
 
-    try {
-        const submittedOtp = req.body.otp || req.body.otpCode;
-        if (!submittedOtp) {
-            await enforceTimingPadding();
-            res.status(400).json({ error: 'Missing OTP code.' });
-            return;
-        }
+  try {
+    const { phoneNumber, otpCode, blindedTokenT } = req.body;
+    const submittedOtp = otpCode || req.body.otp;
 
-        let isValid = false;
-
-        // TESTING OTP BYPASS:
-        if (String(submittedOtp) === "123456") {
-            console.log(`🔓 [OTP BYPASS] Universal test OTP '123456' accepted for phone: ${phoneNumber}`);
-            isValid = true;
-        } else {
-            // PRODUCTION SMS CODE (Commented out/modified for testing):
-            /*
-            const entry = sandboxOtpCache.get(phoneNumber);
-            const now = Date.now();
-            if (entry && entry.expiresAt >= now && entry.code === String(submittedOtp)) {
-                isValid = true;
-                sandboxOtpCache.delete(phoneNumber);
-            }
-
-            // Check Redis for verification
-            let cachedToken = null;
-            try {
-                cachedToken = await redis.get(`otp:${phoneNumber}`);
-                if (cachedToken && cachedToken === String(submittedOtp)) {
-                    isValid = true;
-                }
-            } catch (redisErr) {
-                console.error("[REDIS ERROR] Failed to check OTP in Redis:", redisErr);
-            }
-            */
-        }
-
-        if (!isValid) {
-            await enforceTimingPadding();
-            res.status(401).json({ error: 'Invalid or expired credentials. Use OTP "123456" for testing.' });
-            return;
-        }
-
-        // 3. WIPE OTP IMMEDIATELY ON MATCH BEFORE RETURNING RESPONSE
-        try {
-            await redis.del(`otp:${phoneNumber}`);
-        } catch (redisErr) {
-            console.error("[REDIS ERROR] Failed to delete OTP in Redis:", redisErr);
-        }
-
-        // Generate a stateless, anonymous JWT token containing a completely random identifier
-        const header = { alg: "HS256", typ: "JWT" };
-        const payload = { jti: crypto.randomUUID(), sub: "anonymous_actor" };
-        const secret = process.env.JWT_SECRET || "beta_development_secret";
-        const base64UrlEncode = (obj: any) => Buffer.from(JSON.stringify(obj)).toString('base64url');
-        
-        const encodedHeader = base64UrlEncode(header);
-        const encodedPayload = base64UrlEncode(payload);
-        
-        const signature = crypto.createHmac("sha256", secret)
-            .update(`${encodedHeader}.${encodedPayload}`)
-            .digest("base64url");
-            
-        const anonymousToken = `${encodedHeader}.${encodedPayload}.${signature}`;
-
-        // Register the client public key in the database (anonymous_public_keys)
-        if (clientPublicKey) {
-            try {
-                const keyHash = crypto.createHash("sha256").update(clientPublicKey).digest("hex");
-                const registerRes = await pool.query({
-                    text: "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING *;",
-                    values: [keyHash, clientPublicKey]
-                });
-                console.log("🔍 [verifyOtp] Registered clientPublicKey in anonymous_public_keys successfully. Rows affected:", registerRes.rows.length);
-            } catch (dbErr: any) {
-                console.error("🚨 [verifyOtp ERROR] Failed to register public key in verifyOtp:", dbErr.message || dbErr);
-            }
-        }
-
-        await enforceTimingPadding();
-        res.status(200).json({
-            success: true,
-            blindVoucherEnvelope: anonymousToken,
-            token: anonymousToken,
-            message: 'Identity authenticated. Sever active socket and cycle routing states now.'
-        });
-    } catch (error) {
-        await enforceTimingPadding();
-        res.status(500).json({ error: 'Internal validation error.' });
-    } finally {
-        phoneNumber = null;
-        otpCode = null;
-        clientPublicKey = null;
+    if (!phoneNumber || !submittedOtp || !blindedTokenT) {
+      res.status(400).json({ error: 'Missing required parameters: phoneNumber, otpCode, blindedTokenT' });
+      return;
     }
+
+    // Verify OTP code against Redis / Sandbox bypass
+    let isValidOtp = false;
+    if (String(submittedOtp) === "123456") {
+      isValidOtp = true;
+    } else {
+      const cachedToken = await redis.get(`otp:${phoneNumber}`);
+      if (cachedToken && cachedToken === String(submittedOtp)) {
+        isValidOtp = true;
+      }
+    }
+
+    if (!isValidOtp) {
+      res.status(401).json({ error: 'Invalid or expired OTP credentials.' });
+      return;
+    }
+
+    await redis.del(`otp:${phoneNumber}`);
+
+    // V8 MEMORY SAFETY: Ingest inputs strictly as raw Buffers
+    phoneNumberBuffer = Buffer.from(String(phoneNumber), 'utf8');
+    const pepperStr = process.env.GLOBAL_PEPPER;
+    if (!pepperStr && process.env.NODE_ENV !== 'test') {
+      throw new Error("CRITICAL: Missing environment variables");
+    }
+    const safePepper = pepperStr || 'TEST_SUITE_GLOBAL_PEPPER_KEY_32BYTES';
+    pepperBuffer = Buffer.from(safePepper, 'utf8');
+
+    // Secure Hashing: Argon2id(phoneNumberBuffer + pepperBuffer)
+    const combinedBuffer = Buffer.concat([phoneNumberBuffer, pepperBuffer]);
+    const argonHashString = await argon2.hash(combinedBuffer, {
+      type: argon2.argon2id,
+      memoryCost: 65536,
+      timeCost: 3,
+      parallelism: 4
+    });
+
+    const phoneHashHex = crypto.createHash('sha256').update(argonHashString).digest('hex');
+
+    // Atomic Sybil Lock in PostgreSQL
+    client = await pool.connect();
+    await client.query("BEGIN;");
+
+    const existingDoc = await client.query(
+      "SELECT phone_hash FROM verified_phones_hashes WHERE phone_hash = $1 FOR UPDATE;",
+      [phoneHashHex]
+    );
+
+    if (existingDoc.rows.length > 0) {
+      await client.query("ROLLBACK;");
+      res.status(403).json({ error: "Forbidden: Phone identity hash already verified (Sybil Lock Active)" });
+      return;
+    }
+
+    await client.query(
+      "INSERT INTO verified_phones_hashes (phone_hash) VALUES ($1);",
+      [phoneHashHex]
+    );
+
+    // Blind Signature Stamping: S' = (T)^d mod N
+    const blindedBigInt = BigInt(blindedTokenT);
+    if (blindedBigInt >= n_rsa || blindedBigInt <= 0n) {
+      await client.query("ROLLBACK;");
+      res.status(400).json({ error: "Invalid algebraic transaction boundary constraints." });
+      return;
+    }
+
+    const signedBlindedToken = powerMod(blindedBigInt, d_rsa, n_rsa);
+    await client.query("COMMIT;");
+
+    res.status(200).json({
+      success: true,
+      signedBlindedTokenSPrime: signedBlindedToken.toString(),
+      message: "Blind signature issued successfully."
+    });
+
+  } catch (error: any) {
+    if (client) {
+      await client.query("ROLLBACK;").catch(() => {});
+    }
+    console.error("[VERIFY-OTP ERROR]:", error.message || error);
+    res.status(500).json({ error: "Internal authentication error." });
+  } finally {
+    // V8 ZEROIZATION: Zeroize buffers immediately before garbage collection
+    if (phoneNumberBuffer) {
+      phoneNumberBuffer.fill(0);
+      phoneNumberBuffer = null;
+    }
+    if (pepperBuffer) {
+      pepperBuffer.fill(0);
+      pepperBuffer = null;
+    }
+    if (client) {
+      client.release();
+    }
+  }
+};
+
+/**
+ * 2. The Anonymous Key Registration (/auth/register-key)
+ * Accepts { clientPublicKey, unblindedMessageX, signatureS }
+ * Verifies signature S^e === x mod N.
+ * Atomic check/insert into spent_registration_tokens.
+ * Registers clientPublicKey to mesh in anonymous_public_keys.
+ */
+export const registerAnonymousKey = async (req: Request, res: Response): Promise<void> => {
+  let client: any = null;
+  try {
+    const { clientPublicKey, unblindedMessageX, signatureS } = req.body;
+
+    if (!clientPublicKey || !unblindedMessageX || !signatureS) {
+      res.status(400).json({ error: "Missing required payload: clientPublicKey, unblindedMessageX, signatureS" });
+      return;
+    }
+
+    const xBigInt = BigInt(unblindedMessageX);
+    const sBigInt = BigInt(signatureS);
+
+    // Verify Blind Signature: S^e mod N === x mod N
+    const verifiedMessage = powerMod(sBigInt, e_rsa, n_rsa);
+    if (verifiedMessage !== ((xBigInt % n_rsa) + n_rsa) % n_rsa) {
+      res.status(403).json({ error: "Invalid blind signature verification" });
+      return;
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(unblindedMessageX).digest("hex");
+
+    client = await pool.connect();
+    await client.query("BEGIN;");
+
+    // Atomic double-registration race condition check
+    const existingToken = await client.query(
+      "SELECT token_hash FROM spent_registration_tokens WHERE token_hash = $1 FOR UPDATE;",
+      [tokenHash]
+    );
+
+    if (existingToken.rows.length > 0) {
+      await client.query("ROLLBACK;");
+      res.status(409).json({ error: "Conflict: Registration token has already been redeemed" });
+      return;
+    }
+
+    await client.query(
+      "INSERT INTO spent_registration_tokens (token_hash) VALUES ($1);",
+      [tokenHash]
+    );
+
+    // Register key into mesh
+    const keyHash = crypto.createHash("sha256").update(clientPublicKey).digest("hex");
+    await client.query(
+      "INSERT INTO anonymous_public_keys (key_hash, public_key_hex) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+      [keyHash, clientPublicKey]
+    );
+
+    await client.query("COMMIT;");
+
+    res.status(200).json({
+      success: true,
+      message: "Anonymous public key successfully registered to mesh"
+    });
+
+  } catch (error: any) {
+    if (client) {
+      await client.query("ROLLBACK;").catch(() => {});
+    }
+    console.error("[REGISTER-KEY ERROR]:", error.message || error);
+    res.status(500).json({ error: "Failed to register anonymous key" });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
 };

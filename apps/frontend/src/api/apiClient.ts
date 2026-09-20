@@ -97,10 +97,9 @@ function extractServerTime(headers: any): number | null {
 // 1. BASELINE CONTEXT CONFIGURATION
 const getCleanBaseURL = () => {
   let url = '';
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) {
-    url = import.meta.env.VITE_API_URL;
-  } else if (typeof process !== 'undefined' && process.env && process.env.VITE_API_URL) {
-    url = process.env.VITE_API_URL;
+  const processEnv = typeof process !== 'undefined' ? process.env : undefined;
+  if (processEnv && processEnv.VITE_API_URL) {
+    url = processEnv.VITE_API_URL;
   } else {
     url = 'http://localhost:3001';
   }
@@ -174,7 +173,7 @@ apiClient.interceptors.request.use(
     }
 
     // Set perimeter edge token explicitly
-    const edgeToken = (import.meta as any).env?.VITE_EDGE_TOKEN || '643762a3c2909a56726763ad75d4a1bbf7dd52685c1ec71dce176b8619a61425';
+    const edgeToken = (typeof process !== 'undefined' && process.env?.VITE_EDGE_TOKEN) || '643762a3c2909a56726763ad75d4a1bbf7dd52685c1ec71dce176b8619a61425';
     sanitizedHeaders['x-brone-edge-token'] = edgeToken;
 
     // Replace the headers object entirely to destroy non-essential browser tracking headers

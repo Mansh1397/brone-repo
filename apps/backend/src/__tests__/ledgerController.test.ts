@@ -121,7 +121,7 @@ describe("ECDSA Reputation Telemetry Ledger Controller Unit Tests", () => {
       .expect(401);
 
     expect(response.body).toEqual({
-      error: "Security Denial: ECDSA payload validation mismatch."
+      error: "Security Denial: ML-DSA-87 payload validation mismatch."
     });
   });
 

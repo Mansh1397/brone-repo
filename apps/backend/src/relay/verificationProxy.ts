@@ -193,60 +193,9 @@ app.post("/submit", (req: Request, res: Response) => {
 });
 
 /**
- * 2. ZERO-KNOWLEDGE JURY ATTESTATION GATE (Identity-Agnostic /acquire-lease)
+ * 2. TASK BROADCAST PIPELINE (DECOUPLED ZERO-KNOWLEDGE BROADCAST)
+ * Replaced acquire-lease with blind task broadcast model in Phase 1.
  */
-app.post("/tasks/:taskId/acquire-lease", async (req: Request, res: Response) => {
-  if (!isQuorumHealthy) {
-    return res.status(503).json({ error: "System is in read-only recovery fallback due to quorum loss" });
-  }
-  const { taskId } = req.params;
-  const { zk_proof } = req.body;
-
-  if (!taskId || !zk_proof) {
-    return res.status(400).json({ error: "Missing required lease parameters or ZKP proof" });
-  }
-
-  const lock = getTaskMutex(taskId);
-  await lock.acquire();
-
-  try {
-    const isZkProofValid =
-      zk_proof &&
-      typeof zk_proof === "object" &&
-      zk_proof.public_inputs &&
-      zk_proof.proof_signature &&
-      !zk_proof.proof_signature.includes("invalid");
-
-    if (!isZkProofValid) {
-      releaseTaskMutex(taskId);
-      return res.status(401).json({ error: "Unauthorized ZKP Residency Proof" });
-    }
-
-    const task = activeTasks.get(taskId);
-    if (!task || task.status !== "PENDING") {
-      releaseTaskMutex(taskId);
-      return res.status(404).json({ error: "Dispute task closed, completed, or non-existent" });
-    }
-
-    const leaseTicket = Buffer.from(
-      JSON.stringify({
-        taskId,
-        zk_proof_hash: crypto.createHash("sha256").update(JSON.stringify(zk_proof)).digest("hex"),
-        issued_at: Date.now(),
-        expires_at: Date.now() + 600000
-      })
-    ).toString("base64");
-
-    return res.status(200).json({
-      success: true,
-      lease_ticket: leaseTicket
-    });
-  } catch (err) {
-    return res.status(500).json({ error: "Internal processing error" });
-  } finally {
-    releaseTaskMutex(taskId);
-  }
-});
 
 /**
  * 3. OPAQUE/SILENT PUSH PAYLOADS
