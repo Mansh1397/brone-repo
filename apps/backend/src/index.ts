@@ -3,9 +3,10 @@ import * as crypto from "crypto";
 import helmet from "helmet";
 import cors from "cors";
 import { guardAgainstDoubleSpend } from "./middleware/doubleSpendRegistry";
+import { ohttpGatewayMiddleware } from "./middleware/ohttpGateway";
 import { verifyRingHandler } from "./controllers/ringValidator";
 import { handleBlindStamp, getPublicKeyConfig } from "./controllers/stampController";
-import { handleMetricIncrement } from "./controllers/ledgerController";
+import { handleMetricIncrement, processZkClaim } from "./controllers/ledgerController";
 import { initializeApplicationServer, configureServerTimeouts } from "./utils/bootstrap";
 import { pool } from './controllers/ringValidator';
 import { powValidator, requestOtp, verifyOtp, registerAnonymousKey, sandboxOtpCache } from "./controllers/identityProvider";
@@ -117,6 +118,9 @@ app.use((req, res, next) => {
   res.setHeader("Content-Security-Policy", "frame-ancestors 'none';");
   next();
 });
+
+// Mount OHTTP Dumb Gateway Proxy for Nitro Enclave packet forwarding
+app.use(ohttpGatewayMiddleware);
 
 
 
@@ -359,6 +363,7 @@ v1Router.post("/stamp", requireAuth, handleBlindStamp);
 v1Router.post("/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/reputation/increment", handleMetricIncrement);
 v1Router.post("/reporting/increment", handleMetricIncrement);
+v1Router.post("/rewards/zk-claim", processZkClaim);
 
 const handleGetPublicKeys = async (req: any, res: any) => {
   try {

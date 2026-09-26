@@ -1,59 +1,51 @@
-import * as crypto from 'crypto';
+import crypto from 'react-native-quick-crypto';
 
-export const BLOCK_SIZE = 2097152; // 2MB exact block size
+export const BLOCK_SIZE = 2097152; // 2MB exact Sphinx block size
 
 /**
- * Deterministic Sphinx 2MB Chunked Padding
+ * Deterministic Sphinx 2MB Chunked Padding (React Native Mobile Environment)
  * 
- * Formats the input payload buffer into a fixed 2,097,152 byte packet:
- * - Bytes 0..3: Big-endian 32-bit uint payload length.
- * - Bytes 4..(4 + len - 1): Raw payload bytes.
- * - Remaining bytes up to 2MB: Filled with cryptographic random noise via crypto.getRandomValues().
+ * Target: React Native Environment
+ * Bypasses Hermes/V8 JavaScript JIT and window.crypto.subtle absence by binding directly to C++ JSI via react-native-quick-crypto.
+ * Uses native AES-256-CTR stream cipher over single 32-byte CSPRNG seed.
  */
-export function padPayload(payload: Uint8Array): Uint8Array {
+export async function padPayload(payload: Uint8Array): Promise<Uint8Array> {
   if (!payload || payload.length === 0) {
     throw new Error("Payload cannot be empty");
   }
 
-  // Reserve 4 bytes for 32-bit length header
   const maxPayloadSize = BLOCK_SIZE - 4;
   if (payload.length > maxPayloadSize) {
     throw new Error(`Payload size ${payload.length} bytes exceeds max block capacity of ${maxPayloadSize} bytes`);
   }
 
-  const paddedBuffer = new Uint8Array(BLOCK_SIZE);
+  // 1. Extract exactly 32 bytes of CSPRNG entropy & 16 bytes IV via C++ JSI quick-crypto
+  const seedEntropy = crypto.randomBytes(32);
+  const counterIv = crypto.randomBytes(16);
 
-  // 1. Write 32-bit big-endian length header
-  const view = new DataView(paddedBuffer.buffer);
-  view.setUint32(0, payload.length, false); // false = big-endian
-
-  // 2. Copy payload bytes into padded buffer
-  paddedBuffer.set(payload, 4);
-
-  // 3. Fill remaining buffer up to 2MB with cryptographic random stream noise
+  // 2. Generate 2MB noise stream using C++ JSI native AES-256-CTR cipher
   const paddingOffset = 4 + payload.length;
   const paddingBytesNeeded = BLOCK_SIZE - paddingOffset;
+  const paddedBuffer = new Uint8Array(BLOCK_SIZE);
+
+  // Write 32-bit big-endian length header
+  const view = new DataView(paddedBuffer.buffer);
+  view.setUint32(0, payload.length, false);
+
+  // Copy payload
+  paddedBuffer.set(payload, 4);
 
   if (paddingBytesNeeded > 0) {
-    if (typeof crypto !== 'undefined' && (crypto as any).getRandomValues) {
-      // Safely chunk Web Crypto API calls to bypass 64KB QuotaExceededError
-      const MAX_CHUNK_SIZE = 65536;
-      let currentOffset = paddingOffset;
-      
-      while (currentOffset < BLOCK_SIZE) {
-        const remaining = BLOCK_SIZE - currentOffset;
-        const chunkSize = Math.min(MAX_CHUNK_SIZE, remaining);
-        const chunk = new Uint8Array(chunkSize);
-        (crypto as any).getRandomValues(chunk);
-        paddedBuffer.set(chunk, currentOffset);
-        currentOffset += chunkSize;
-      }
-    } else {
-      // Fallback for Node.js test environments
-      const randomBuf = require('crypto').randomBytes(paddingBytesNeeded);
-      paddedBuffer.set(randomBuf, paddingOffset);
-    }
+    const cipher = crypto.createCipheriv('aes-256-ctr', seedEntropy, counterIv);
+    const zeroPadding = Buffer.alloc(paddingBytesNeeded);
+    const noiseBuffer = Buffer.concat([cipher.update(zeroPadding), cipher.final()]);
+    
+    paddedBuffer.set(new Uint8Array(noiseBuffer), paddingOffset);
   }
+
+  // Zeroize temporary seed entropy in RAM
+  seedEntropy.fill(0);
+  counterIv.fill(0);
 
   return paddedBuffer;
 }

@@ -1,30 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
-import * as crypto from 'crypto';
-import { stripPadding } from '../utils/padding';
+import * as net from 'net';
 
-// Backend HPKE Private Key for OHTTP Decapsulation
-const BACKEND_HPKE_PRIVATE_KEY = process.env.HPKE_PRIVATE_KEY || crypto.generateKeyPairSync('x25519').privateKey;
-
-/**
- * God-Mode RTT Fix: Executes a dummy cryptographic hashing loop
- * matching average PostgreSQL write latencies (50-80ms) for chaff requests.
- */
-async function executeRTTNormalizationDelay(): Promise<void> {
-  const targetDelayMs = 50 + Math.floor(Math.random() * 30); // 50ms - 80ms jitter
-  const startTime = Date.now();
-  
-  // Perform CPU workload (PBKDF2 hashing passes) while waiting for target delay
-  while (Date.now() - startTime < targetDelayMs) {
-    crypto.pbkdf2Sync('CHAFF_RTT_NORMALIZATION_KEY', 'SALT_VECTOR', 500, 32, 'sha256');
-  }
-}
+const ENCLAVE_VSOCK_CID = 16;
+const ENCLAVE_VSOCK_PORT = 5000;
 
 /**
- * Express Middleware: Oblivious HTTP (OHTTP) Gateway & Decapsulator
+ * Dumb Proxy Express Middleware (Phase 3 Architecture)
  * 
- * Decapsulates incoming binary `application/ohttp-req` payloads from OHTTP relayers.
- * Strips 2MB Sphinx padding with V8 memory safety.
- * Normalizes TCP Round-Trip Times (RTT) on chaff packets via simulated DB write delay.
+ * Eradicates host-level cryptography from Node.js runtime:
+ * - Performs NO OHTTP decapsulation, NO padding stripping, NO setTimeout chaff delays in Node.js heap.
+ * - Ingests the 2MB binary payload and streams it directly over vsock (CID 16, Port 5000) to AWS Nitro Enclave.
+ * - Streams the Enclave response buffer directly back to the client/OHTTP Relayer.
  */
 export async function ohttpGatewayMiddleware(req: Request, res: Response, next: NextFunction) {
   if (req.headers['content-type'] !== 'application/ohttp-req') {
@@ -34,48 +20,45 @@ export async function ohttpGatewayMiddleware(req: Request, res: Response, next: 
   try {
     const rawBodyBuf: Buffer = req.body && Buffer.isBuffer(req.body) ? req.body : (req as any).rawBody;
 
-    if (!rawBodyBuf || rawBodyBuf.length < 44) {
+    if (!rawBodyBuf || rawBodyBuf.length === 0) {
       res.setHeader('Content-Type', 'application/ohttp-res');
-      return res.status(400).send(Buffer.from('Invalid OHTTP Request Length'));
+      return res.status(400).send(Buffer.from('Invalid OHTTP Request Body'));
     }
 
-    // 1. Decapsulate OHTTP request header & payload
-    // Ephemeral Pub Key (32 bytes) + IV (12 bytes) + Auth Tag (16 bytes)
-    const ephemeralPub = rawBodyBuf.subarray(0, 32);
-    const iv = rawBodyBuf.subarray(32, 44);
-    const authTag = rawBodyBuf.subarray(44, 60);
-    const ciphertext = rawBodyBuf.subarray(60);
+    // Connect to AWS Nitro Enclave vsock stream socket (CID 16, Port 5000)
+    // Note: In Node.js environment under Linux/Nitro, vsock sockets use socket connections via AF_VSOCK or TCP proxy bridge
+    const vsockSocket = net.connect({
+      port: ENCLAVE_VSOCK_PORT,
+      host: process.env.VSOCK_BRIDGE_HOST || '127.0.0.1'
+    });
 
-    // Decrypt using backend key (simulated AES-GCM decapsulation)
-    let paddedPacket: Buffer;
-    if (ciphertext.length >= 2097152) {
-      paddedPacket = ciphertext.subarray(0, 2097152);
-    } else {
-      paddedPacket = Buffer.alloc(2097152);
-      ciphertext.copy(paddedPacket);
-    }
+    const responseChunks: Buffer[] = [];
 
-    // 2. Strip Sphinx 2MB padding with V8 memory zeroization
-    const { payload, isChaff } = stripPadding(paddedPacket);
+    vsockSocket.on('connect', () => {
+      // Stream raw 2MB payload directly to Nitro Enclave
+      vsockSocket.write(rawBodyBuf);
+      vsockSocket.end();
+    });
 
-    // 3. GOD-MODE RTT NORMALIZATION: If chaff, execute 50-80ms delay & return 200 OK
-    if (isChaff) {
-      await executeRTTNormalizationDelay();
-      
-      const responsePayload = Buffer.from(JSON.stringify({ status: "ACK", type: "CHAFF_NORMALIZED" }));
+    vsockSocket.on('data', (chunk: Buffer) => {
+      responseChunks.push(chunk);
+    });
+
+    vsockSocket.on('end', () => {
+      const enclaveResponse = Buffer.concat(responseChunks);
       res.setHeader('Content-Type', 'application/ohttp-res');
-      return res.status(200).send(responsePayload);
-    }
+      res.status(200).send(enclaveResponse);
+    });
 
-    // Attach decapsulated inner payload to request object for router handlers
-    (req as any).decapsulatedPayload = payload;
-    req.body = JSON.parse(payload.toString('utf8'));
-
-    return next();
+    vsockSocket.on('error', (vsockErr: Error) => {
+      console.error("[VSOCK PROXY ERROR] Failed streaming to Nitro Enclave:", vsockErr.message);
+      res.setHeader('Content-Type', 'application/ohttp-res');
+      res.status(502).send(Buffer.from('Nitro Enclave Gateway Unreachable'));
+    });
 
   } catch (err: any) {
-    console.error("[OHTTP GATEWAY ERROR] Decapsulation failure:", err.message || err);
+    console.error("[DUMB PROXY ERROR] Stream error:", err.message || err);
     res.setHeader('Content-Type', 'application/ohttp-res');
-    return res.status(400).send(Buffer.from('OHTTP Decapsulation Failure'));
+    res.status(500).send(Buffer.from('Gateway Streaming Failure'));
   }
 }
